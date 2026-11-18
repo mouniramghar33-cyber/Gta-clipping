@@ -1,0 +1,12 @@
+streamlink==8.6.3
+faster-whisper==1.2.1
+ctranslate2==4.9.0
+opencv-python-headless==5.1.0.95
+numpy==2.5.3
+fastapi==0.163.2
+uvicorn[standard]==0.54.0
+websockets==17.4
+httpx==0.28.1
+psutil==7.2.2
+PyYAML==6.0.3
+python-multipart==0.0.32

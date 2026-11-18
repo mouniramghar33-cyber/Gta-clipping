@@ -1,0 +1,17 @@
+# Copy to data/config.yaml (optional). Anything not listed uses the built-in defaults
+# (see autoclipper/config.py). Everything here can also be changed in the dashboard.
+streamers:
+  - kaicenat
+  - caseoh_
+  - summit1g
+  - sodapoppin
+  - jynxzi
+detection:
+  z_threshold: 3.0
+  ratio_threshold: 2.2
+scoring:
+  priority_threshold: 80
+whisper:
+  model: small
+publishing:
+  mode: manual

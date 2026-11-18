@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AutoClipper</title>
+<style>
+:root{--bg:#0b0d12;--panel:#141821;--panel2:#1b2030;--line:#262c3d;--text:#e8ebf2;--muted:#8b93a7;
+--accent:#ff4d8d;--accent2:#ffb03a;--good:#35d07f;--bad:#ff5a5a;--warn:#ffc53d;--blue:#4da3ff}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+header{display:flex;align-items:center;gap:16px;padding:14px 20px;border-bottom:1px solid var(--line);position:sticky;top:0;background:rgba(11,13,18,.92);backdrop-filter:blur(8px);z-index:5;flex-wrap:wrap}
+.logo{font-weight:800;font-size:18px;letter-spacing:.3px;background:linear-gradient(90deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent}
+nav{display:flex;gap:4px;flex-wrap:wrap}
+nav button{background:none;border:0;color:var(--muted);padding:8px 12px;border-radius:8px;cursor:pointer;font:inherit}
+nav button.on{background:var(--panel2);color:var(--text)}
+.pill{font-size:12px;padding:3px 9px;border-radius:999px;background:var(--panel2);color:var(--muted);white-space:nowrap}
+.pill.live{background:rgba(255,77,141,.15);color:var(--accent)}
+.pill.ok{background:rgba(53,208,127,.12);color:var(--good)}
+.pill.bad{background:rgba(255,90,90,.12);color:var(--bad)}
+.pill.warn{background:rgba(255,197,61,.12);color:var(--warn)}
+main{padding:20px;max-width:1400px;margin:0 auto}
+.grid{display:grid;gap:14px}
+.g4{grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.g2{grid-template-columns:repeat(auto-fit,minmax(420px,1fr))}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}
+.card h3{margin:0 0 10px;font-size:13px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.6px}
+.big{font-size:26px;font-weight:700}
+.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.sp{flex:1}
+.muted{color:var(--muted)}
+canvas{width:100%;height:150px;display:block}
+button.b{background:var(--panel2);border:1px solid var(--line);color:var(--text);padding:7px 12px;border-radius:9px;cursor:pointer;font:inherit}
+button.b:hover{border-color:#3a4258}
+button.p{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+button.g{background:rgba(53,208,127,.15);border-color:rgba(53,208,127,.4);color:var(--good)}
+button.r{background:rgba(255,90,90,.12);border-color:rgba(255,90,90,.35);color:var(--bad)}
+input,select,textarea{background:var(--bg);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:7px 9px;font:inherit}
+.clips{grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}
+.clip video{width:100%;aspect-ratio:9/16;max-height:520px;background:#000;border-radius:10px;object-fit:contain}
+.score{font-size:22px;font-weight:800}
+.s-hi{color:var(--good)} .s-mid{color:var(--warn)} .s-lo{color:var(--muted)}
+.bars{display:grid;grid-template-columns:auto 1fr auto;gap:3px 8px;font-size:12px;color:var(--muted);align-items:center;margin:8px 0}
+.bar{height:6px;background:var(--panel2);border-radius:4px;overflow:hidden}
+.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2))}
+.title{font-weight:650;margin:6px 0 2px}
+.small{font-size:12px}
+table{width:100%;border-collapse:collapse}
+td,th{padding:8px;border-bottom:1px solid var(--line);text-align:left;font-size:13px;vertical-align:top}
+th{color:var(--muted);font-weight:600}
+.sec{margin-bottom:14px}
+.kv{display:grid;grid-template-columns:minmax(160px,260px) 1fr;gap:6px 12px;align-items:center}
+.kv label{color:var(--muted);font-size:13px}
+pre{white-space:pre-wrap;font-size:12px;color:var(--muted);max-height:520px;overflow:auto;margin:0}
+.hidden{display:none}
+.toast{position:fixed;right:16px;bottom:16px;background:var(--panel2);border:1px solid var(--line);padding:10px 14px;border-radius:10px;z-index:9}
+.legend{display:flex;gap:12px;font-size:12px;color:var(--muted)}
+.legend i{display:inline-block;width:10px;height:3px;margin-right:5px;vertical-align:middle}
+@media (max-width:600px){main{padding:12px}.g2{grid-template-columns:1fr}.kv{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">AutoClipper</div>
+  <nav id="nav">
+    <button data-t="live" class="on">Live</button>
+    <button data-t="clips">Clips</button>
+    <button data-t="moments">Moments</button>
+    <button data-t="streamers">Streamers</button>
+    <button data-t="settings">Settings</button>
+    <button data-t="system">System</button>
+  </nav>
+  <div class="sp"></div>
+  <span id="chatPill" class="pill">chat …</span>
+  <span id="queuePill" class="pill">queue …</span>
+</header>
+<main>
+  <section id="t-live">
+    <div class="grid g4 sec" id="kpis"></div>
+    <div class="grid g2" id="liveCards"></div>
+  </section>
+
+  <section id="t-clips" class="hidden">
+    <div class="row sec">
+      <select id="fStatus"><option value="">All</option><option value="pending" selected>Pending review</option>
+        <option value="approved">Approved</option><option value="published">Published</option>
+        <option value="rejected">Rejected</option><option value="auto_rejected">Auto-rejected</option></select>
+      <label class="muted">Min score <input id="fScore" type="number" value="0" min="0" max="100" style="width:70px"></label>
+      <button class="b" onclick="loadClips()">Refresh</button>
+      <span class="sp"></span><span class="muted small" id="clipCount"></span>
+    </div>
+    <div class="grid clips" id="clipGrid"></div>
+  </section>
+
+  <section id="t-moments" class="hidden">
+    <div class="card"><table><thead><tr><th>#</th><th>Streamer</th><th>When</th><th>Length</th><th>Chat peak</th><th>Signals</th><th>Status</th></tr></thead>
+    <tbody id="momentRows"></tbody></table></div>
+  </section>
+
+  <section id="t-streamers" class="hidden">
+    <div class="card sec">
+      <h3>Add streamer</h3>
+      <div class="row">
+        <input id="newLogin" placeholder="channel name (e.g. kaicenat)">
+        <select id="newPlatform"><option>twitch</option><option>kick</option><option>youtube</option></select>
+        <label class="muted small"><input type="checkbox" id="newRights"> I have permission to publish this creator's content</label>
+        <button class="b p" onclick="addStreamer()">Add</button>
+      </div>
+      <p class="muted small">Chat-based detection is available for Twitch. Kick/YouTube channels are recorded but need Twitch chat for automatic detection.</p>
+    </div>
+    <div class="card"><table><thead><tr><th>Channel</th><th>Platform</th><th>Status</th><th>Monitor</th><th>Publishing rights</th><th></th></tr></thead>
+      <tbody id="streamerRows"></tbody></table></div>
+  </section>
+
+  <section id="t-settings" class="hidden">
+    <div class="row sec"><span class="muted">Changes are saved to config.yaml and apply immediately (recording/whisper changes apply to new sessions/clips).</span><span class="sp"></span>
+      <button class="b p" onclick="saveSettings()">Save settings</button></div>
+    <div class="grid g2" id="settingsForm"></div>
+  </section>
+
+  <section id="t-system" class="hidden">
+    <div class="grid g4 sec" id="sysKpis"></div>
+    <div class="grid g2">
+      <div class="card"><h3>Storage</h3><div id="storageInfo" class="sec"></div>
+        <button class="b" onclick="runCleanup()">Run cleanup now</button></div>
+      <div class="card"><h3>Publishing</h3><div id="pubInfo"></div></div>
+    </div>
+    <div class="card" style="margin-top:14px"><h3>Logs</h3><pre id="logs"></pre></div>
+  </section>
+</main>
+<div id="toast" class="toast hidden"></div>
+<script>
+const $=s=>document.querySelector(s);
+const api=async(p,o={})=>{const r=await fetch(p,{headers:{'Content-Type':'application/json'},...o});
+  if(!r.ok){let m=r.statusText;try{m=(await r.json()).detail||m}catch(e){} throw new Error(m)} return r.json()};
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmtB=b=>{const u=['B','KB','MB','GB','TB'];let i=0;while(b>=1024&&i<4){b/=1024;i++}return b.toFixed(i?1:0)+' '+u[i]};
+const ago=t=>{const s=Date.now()/1000-t;return s<60?Math.round(s)+'s ago':s<3600?Math.round(s/60)+'m ago':s<86400?Math.round(s/3600)+'h ago':Math.round(s/86400)+'d ago'};
+const tm=t=>new Date(t*1000).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+function toast(m){const t=$('#toast');t.textContent=m;t.classList.remove('hidden');clearTimeout(t._h);t._h=setTimeout(()=>t.classList.add('hidden'),3500)}
+let tab='live';
+document.querySelectorAll('#nav button').forEach(b=>b.onclick=()=>{tab=b.dataset.t;
+  document.querySelectorAll('#nav button').forEach(x=>x.classList.toggle('on',x===b));
+  document.querySelectorAll('main>section').forEach(s=>s.classList.toggle('hidden',s.id!=='t-'+tab));refresh()});
+
+let status=null;
+async function loadStatus(){
+  status=await api('/api/status');
+  $('#chatPill').className='pill '+(status.chat_connected?'ok':'bad');$('#chatPill').textContent=status.chat_connected?'chat connected':'chat offline';
+  $('#queuePill').textContent=`queue ${status.queue.queued} · rendering ${status.queue.processing}`;
+}
+
+function scoreCls(s){return s>=80?'s-hi':s>=55?'s-mid':'s-lo'}
+
+async function renderLive(){
+  const s=status, live=s.streamers.filter(x=>x.live), sv=s.server;
+  $('#kpis').innerHTML=[
+    ['Monitored',s.streamers.filter(x=>x.enabled).length],['Live now',live.length],
+    ['Recording',s.streamers.filter(x=>x.recording).length],['CPU',Math.round(sv.cpu)+'%']
+  ].map(([k,v])=>`<div class="card"><h3>${k}</h3><div class="big">${v}</div></div>`).join('');
+  const cards=[];
+  for(const st of s.streamers.filter(x=>x.enabled)){
+    const c=st.chat;
+    cards.push(`<div class="card"><div class="row"><b>${esc(st.display_name||st.login)}</b>
+      ${st.live?'<span class="pill live">● LIVE</span>':'<span class="pill">offline</span>'}
+      ${st.recording?`<span class="pill ok">rec · ${st.segment_age??'–'}s</span>`:''}
+      ${c&&c.triggered?'<span class="pill warn">⚡ moment</span>':''}
+      ${st.error?`<span class="pill bad" title="${esc(st.error)}">error</span>`:''}<span class="sp"></span>
+      <span class="muted small">${esc(st.category||'')}</span></div>
+      <div class="muted small" style="margin:4px 0 8px">${esc((st.title||'').slice(0,120))}</div>
+      ${st.live?`<canvas id="cv-${st.login}"></canvas>
+      <div class="row small muted" style="margin-top:6px"><div class="legend"><span><i style="background:var(--accent)"></i>msgs / 10 s</span>
+      <span><i style="background:var(--blue)"></i>baseline</span><span><i style="background:var(--accent2)"></i>moments</span></div><span class="sp"></span>
+      ${c?`now ${c.messages} msgs · ${c.ratio}× baseline · z ${c.z} · reactions ${Math.round(c.hype*100)}% · audio +${c.audio_db} dB`:'building baseline…'}</div>`:
+      `<div class="muted small">Last checked ${st.last_check?ago(st.last_check):'—'}</div>`}</div>`);
+  }
+  $('#liveCards').innerHTML=cards.join('')||'<div class="card muted">No streamers yet. Add some under Streamers.</div>';
+  for(const st of live){const d=await api(`/api/chat/${st.login}?minutes=30`);drawChart($('#cv-'+st.login),d)}
+}
+
+function drawChart(cv,d){
+  if(!cv)return;const dpr=devicePixelRatio||1,W=cv.clientWidth,H=cv.clientHeight;cv.width=W*dpr;cv.height=H*dpr;
+  const g=cv.getContext('2d');g.scale(dpr,dpr);g.clearRect(0,0,W,H);
+  const b=d.bins;if(b.length<2){g.fillStyle='#8b93a7';g.fillText('collecting chat data…',10,20);return}
+  const t0=b[0].t,t1=b[b.length-1].t,mx=Math.max(...b.map(x=>x.messages),1)*1.1;
+  const X=t=>(t-t0)/(t1-t0||1)*(W-30)+25,Y=v=>H-18-(v/mx)*(H-28);
+  g.strokeStyle='#262c3d';g.fillStyle='#8b93a7';g.font='10px system-ui';
+  for(let i=0;i<=3;i++){const v=mx*i/3;g.beginPath();g.moveTo(25,Y(v));g.lineTo(W,Y(v));g.stroke();g.fillText(Math.round(v),0,Y(v)+3)}
+  for(const m of d.moments){g.fillStyle='rgba(255,176,58,.18)';const a=X(Math.max(m.t_start,t0)),z=X(Math.min(m.t_end,t1));g.fillRect(a,8,Math.max(z-a,3),H-26)}
+  const grad=g.createLinearGradient(0,0,0,H);grad.addColorStop(0,'rgba(255,77,141,.45)');grad.addColorStop(1,'rgba(255,77,141,0)');
+  g.beginPath();g.moveTo(X(b[0].t),Y(0));b.forEach(x=>g.lineTo(X(x.t),Y(x.messages)));g.lineTo(X(t1),Y(0));g.fillStyle=grad;g.fill();
+  g.beginPath();b.forEach((x,i)=>i?g.lineTo(X(x.t),Y(x.messages)):g.moveTo(X(x.t),Y(x.messages)));g.strokeStyle='#ff4d8d';g.lineWidth=1.6;g.stroke();
+  g.beginPath();let f=1;b.forEach(x=>{if(x.ratio){const base=x.messages/x.ratio;f?g.moveTo(X(x.t),Y(base)):g.lineTo(X(x.t),Y(base));f=0}});
+  g.strokeStyle='#4da3ff';g.setLineDash([4,3]);g.lineWidth=1;g.stroke();g.setLineDash([]);
+  g.fillStyle='#8b93a7';g.fillText(tm(t0),25,H-4);g.fillText(tm(t1),W-50,H-4);
+}
+
+async function loadClips(){
+  const st=$('#fStatus').value,ms=$('#fScore').value||0;
+  const rows=await api(`/api/clips?min_score=${ms}${st?'&status='+st:''}`);
+  $('#clipCount').textContent=rows.length+' clips';
+  $('#clipGrid').innerHTML=rows.map(c=>{
+    const sc=c.scores||{},comp=Object.entries(sc).filter(([k,v])=>typeof v==='number');
+    const pubs=(c.publications||[]).map(p=>`<span class="pill ${p.status==='done'?'ok':p.status==='failed'?'bad':'warn'}" title="${esc(p.error||p.url||'')}">${p.platform}: ${p.status}</span>`).join(' ');
+    return `<div class="card clip">
+      ${c.path?`<video src="/media/clip/${c.id}.mp4" poster="/media/thumb/${c.id}.jpg" controls preload="none" playsinline></video>`:'<div class="muted">file deleted</div>'}
+      <div class="row" style="margin-top:8px"><span class="score ${scoreCls(c.score)}">${Math.round(c.score)}</span>
+        ${c.priority?'<span class="pill live">priority</span>':''}<span class="pill">${esc(c.status)}</span><span class="pill">${esc(c.layout)}</span>
+        <span class="sp"></span><span class="muted small">${esc(c.streamer)} · ${c.duration?.toFixed(1)}s · ${ago(c.created_at)}</span></div>
+      <div class="title" contenteditable="true" data-id="${c.id}" data-f="title">${esc(c.title)}</div>
+      <div class="small muted">Hook: <span contenteditable="true" data-id="${c.id}" data-f="hook">${esc(c.hook)}</span></div>
+      <div class="small muted">${(c.hashtags||[]).map(h=>'#'+esc(h)).join(' ')}</div>
+      <div class="bars">${comp.map(([k,v])=>`<span>${k.replace(/_/g,' ')}</span><div class="bar"><i style="width:${v}%"></i></div><span>${Math.round(v)}</span>`).join('')}</div>
+      <details class="small muted"><summary>Why this clip · details</summary>
+        <p>${esc(c.explanation)}</p><p><b>Thumbnail:</b> ${esc(c.thumbnail_suggestion)}</p>
+        <p><b>Source:</b> ${new Date(c.src_start*1000).toISOString()} → ${new Date(c.src_end*1000).toISOString()}${c.stream_offset!=null?` (stream +${Math.round(c.stream_offset)}s)`:''}</p>
+        <p><b>Transcript (${esc(c.language)}):</b> ${esc(c.transcript)}</p><p style="white-space:pre-wrap">${esc(c.description)}</p></details>
+      <div class="row" style="margin-top:10px">
+        <button class="b g" onclick="decide(${c.id},'approve')">Approve</button>
+        <button class="b r" onclick="decide(${c.id},'reject')">Reject</button>
+        ${c.path?`<a class="b" style="text-decoration:none;padding:7px 12px;border-radius:9px;border:1px solid var(--line)" href="/media/clip/${c.id}.mp4?download=1">Download</a>`:''}
+        <span class="sp"></span>
+        <select id="pp-${c.id}"><option value="youtube">YouTube</option><option value="tiktok">TikTok</option><option value="instagram">Instagram</option></select>
+        <button class="b p" onclick="publish(${c.id})" ${c.status==='approved'||c.status==='published'?'':'disabled title="approve first"'}>Publish</button>
+      </div><div class="row" style="margin-top:6px">${pubs}</div></div>`}).join('')||'<div class="muted">No clips yet.</div>';
+  document.querySelectorAll('[contenteditable]').forEach(el=>el.onblur=async()=>{
+    await api(`/api/clips/${el.dataset.id}`,{method:'PATCH',body:JSON.stringify({[el.dataset.f]:el.textContent.trim()})});toast('Saved')});
+}
+async function decide(id,a){await api(`/api/clips/${id}/${a}`,{method:'POST'});toast(a==='approve'?'Approved':'Rejected');loadClips()}
+async function publish(id){
+  const platform=$('#pp-'+id).value;
+  if(!confirm(`Publish clip ${id} to ${platform}?\n\nOnly continue if you have the rights/permission from the creator to publish this content.`))return;
+  try{await api(`/api/clips/${id}/publish`,{method:'POST',body:JSON.stringify({platform,confirm_rights:true})});toast('Publishing started');setTimeout(loadClips,1500)}
+  catch(e){toast(e.message)}
+}
+
+async function loadMoments(){
+  const rows=await api('/api/moments?limit=200');
+  $('#momentRows').innerHTML=rows.map(m=>{const s=m.signals||{},cats=Object.entries(s.categories||{}).sort((a,b)=>b[1]-a[1]).slice(0,3);
+    return `<tr><td>${m.id}</td><td>${esc(m.streamer)}</td><td>${tm(m.peak_t)}<div class="muted small">${ago(m.created_at)}</div></td>
+    <td>${Math.round(m.t_end-m.t_start)}s</td><td>${(m.peak_ratio||0).toFixed(1)}× · z ${(m.peak_z||0).toFixed(1)}</td>
+    <td class="small muted">${cats.map(([k,v])=>`${k} ${v}`).join(', ')}${s.max_audio_spike_db?` · audio +${s.max_audio_spike_db} dB`:''}</td>
+    <td><span class="pill ${m.status==='done'?'ok':m.status==='failed'?'bad':m.status==='skipped'?'':'warn'}" title="${esc(m.error||'')}">${m.status}</span>
+    ${m.error?`<div class="muted small">${esc(m.error).slice(0,120)}</div>`:''}</td></tr>`}).join('');
+}
+
+async function loadStreamers(){
+  const rows=status.streamers;
+  $('#streamerRows').innerHTML=rows.map(s=>`<tr><td><b>${esc(s.display_name||s.login)}</b><div class="muted small">${esc(s.login)}</div></td>
+    <td>${esc(s.platform)}</td><td>${s.live?'<span class="pill live">live</span>':'<span class="pill">offline</span>'} ${s.error?`<span class="pill bad" title="${esc(s.error)}">error</span>`:''}</td>
+    <td><input type="checkbox" ${s.enabled?'checked':''} onchange="patchS('${s.login}',{enabled:this.checked})"></td>
+    <td><input type="checkbox" ${s.rights_granted?'checked':''} onchange="patchS('${s.login}',{rights_granted:this.checked})"> <span class="muted small">allows auto-publish</span></td>
+    <td><button class="b r" onclick="delS('${s.login}')">Remove</button></td></tr>`).join('');
+}
+async function addStreamer(){
+  try{await api('/api/streamers',{method:'POST',body:JSON.stringify({login:$('#newLogin').value,platform:$('#newPlatform').value,rights_granted:$('#newRights').checked})});
+  $('#newLogin').value='';toast('Added');await loadStatus();loadStreamers()}catch(e){toast(e.message)}
+}
+async function patchS(l,b){await api('/api/streamers/'+l,{method:'PATCH',body:JSON.stringify(b)});toast('Saved')}
+async function delS(l){if(!confirm('Remove '+l+'?'))return;await api('/api/streamers/'+l,{method:'DELETE'});await loadStatus();loadStreamers()}
+
+let settings=null;
+async function loadSettings(){
+  settings=await api('/api/settings');
+  const sections=Object.entries(settings);const html=[];
+  const field=(path,v)=>{const id='s:'+path;
+    if(typeof v==='boolean')return `<label>${path.split('.').slice(1).join('.')||path}</label><input type="checkbox" id="${id}" ${v?'checked':''}>`;
+    if(typeof v==='number')return `<label>${path.split('.').slice(1).join('.')||path}</label><input type="number" step="any" id="${id}" value="${v}">`;
+    if(v===null||typeof v==='string')return `<label>${path.split('.').slice(1).join('.')||path}</label><input id="${id}" value="${esc(v??'')}" data-null="${v===null}">`;
+    if(Array.isArray(v))return `<label>${path.split('.').slice(1).join('.')}</label><input id="${id}" value="${esc(v.join(', '))}" data-arr="1">`;
+    return Object.entries(v).map(([k,x])=>field(path+'.'+k,x)).join('')};
+  for(const [k,v] of sections){
+    if(typeof v!=='object'||v===null){html.push(`<div class="card"><h3>general</h3><div class="kv">${field(k,v).replace(`<label></label>`,`<label>${k}</label>`)}</div></div>`);continue}
+    html.push(`<div class="card"><h3>${k}</h3><div class="kv">${field(k,v)}</div></div>`)}
+  $('#settingsForm').innerHTML=html.join('');
+}
+async function saveSettings(){
+  const patch={};
+  document.querySelectorAll('[id^="s:"]').forEach(el=>{const path=el.id.slice(2).split('.');let v;
+    if(el.type==='checkbox')v=el.checked;else if(el.type==='number')v=Number(el.value);
+    else if(el.dataset.arr)v=el.value.split(',').map(x=>x.trim()).filter(Boolean);
+    else v=(el.value===''&&el.dataset.null==='true')?null:el.value;
+    let o=patch;path.slice(0,-1).forEach(p=>o=o[p]=o[p]||{});o[path[path.length-1]]=v});
+  try{settings=await api('/api/settings',{method:'PUT',body:JSON.stringify(patch)});toast('Settings saved')}catch(e){toast('Error: '+e.message)}
+}
+
+async function loadSystem(){
+  const sv=status.server;
+  $('#sysKpis').innerHTML=[['CPU',Math.round(sv.cpu)+'% of '+sv.cpus+' cores'],['Load',sv.load.map(x=>x.toFixed(2)).join(' / ')],
+    ['Memory',fmtB(sv.mem_used)+' / '+fmtB(sv.mem_total)],['Uptime',Math.round(sv.uptime/3600*10)/10+' h']]
+    .map(([k,v])=>`<div class="card"><h3>${k}</h3><div class="big" style="font-size:20px">${v}</div></div>`).join('');
+  const pct=sv.disk_used/sv.disk_total*100;
+  $('#storageInfo').innerHTML=`<div class="bar" style="height:10px;margin:6px 0"><i style="width:${pct}%"></i></div>
+    Disk ${fmtB(sv.disk_used)} / ${fmtB(sv.disk_total)} · AutoClipper data ${fmtB(sv.data_bytes)}`;
+  $('#pubInfo').innerHTML=Object.entries(status.publishers).map(([k,v])=>`<div class="row"><b style="width:100px">${k}</b>
+    <span class="pill ${v?'ok':''}">${v?'credentials configured':'not configured'}</span></div>`).join('')+
+    '<p class="muted small">Credentials are set via environment variables (.env). Mode, platforms and privacy are under Settings → publishing.</p>';
+  const l=await api('/api/logs?lines=300');$('#logs').textContent=l.lines.join('\n');
+}
+async function runCleanup(){const r=await api('/api/storage/cleanup',{method:'POST'});toast(`Removed ${r.segments_removed} segments, ${r.clips_removed} clips`);refresh()}
+
+async function refresh(){
+  try{await loadStatus();
+    if(tab==='live')await renderLive();else if(tab==='clips')await loadClips();else if(tab==='moments')await loadMoments();
+    else if(tab==='streamers')await loadStreamers();else if(tab==='settings'){if(!settings)await loadSettings()}else if(tab==='system')await loadSystem();
+  }catch(e){toast(e.message)}
+}
+refresh();setInterval(()=>{if(tab==='live'||tab==='system')refresh();else loadStatus()},5000);
+</script>
+</body>
+</html>
