@@ -17,7 +17,13 @@
 | Tools | Nog te koppelen (scheduler, clipping tool, editor, opslag) |
 | Taal content | **Engels** (Amerikaanse streamers = Amerikaans/Engelstalig publiek) |
 
-### Bio (beide platforms)
+### Bio TikTok (max. 80 tekens)
+```
+GTA 6 stream moments when chat loses it 💀
+Fan page, not affiliated w/ Rockstar
+```
+
+### Bio YouTube (meer ruimte)
 ```
 Funniest GTA 6 stream moments & when chat lost it 💀
 Credited clips daily. Fan page, not affiliated with Rockstar Games.
