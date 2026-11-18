@@ -78,3 +78,18 @@ try:
     print(f"Buffer GraphQL documents valid against live schema: {len(sent) - len(bad)}/{len(sent)}", bad or "")
 except ImportError:
     print("pip install graphql-core to validate Buffer queries against the live schema")
+
+# ---- chat sources: Kick official API and YouTube Data API with invalid credentials ---------
+from autoclipper.chat_sources import KickChat, YouTubeChat  # noqa: E402
+vault.set("KICK_CLIENT_ID", "invalid")
+vault.set("KICK_CLIENT_SECRET", "invalid")
+vault.set("YT_API_KEY", "invalid-key")
+for name, fn in (("Kick app token (id.kick.com)", lambda: KickChat(vault, lambda *a: None).resolve_user_ids(["adinross"])),
+                 ("YouTube videos.list (API key)", lambda: YouTubeChat(vault, cfg, db, lambda *a: None).live_chat_id("dQw4w9WgXcQ"))):
+    try:
+        print(f"{name:<32} UNEXPECTED SUCCESS", fn())
+    except Exception as e:  # noqa: BLE001
+        print(f"{name:<32} ok (rejected)        {str(e)[:120]}")
+import httpx  # noqa: E402
+pk = httpx.get("https://api.kick.com/public/v1/public-key", timeout=30).json()["data"]["public_key"]
+print(f"{'Kick webhook public key':<32} {'ok' if pk.startswith('-----BEGIN PUBLIC KEY-----') else 'UNEXPECTED'}")

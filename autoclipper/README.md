@@ -23,6 +23,49 @@ OpenCV, SQLite, FastAPI and Docker. You don't need any paid API.
 
 ---
 
+## The watchlist (exclusive)
+
+Exactly these 11 streamers are monitored (`autoclipper/watchlist.yaml`, verified 18 Nov 2026).
+Nothing else is ever added automatically; streamers you add yourself in the dashboard are the
+only exception.
+
+| Streamer | Channels, tried in order (first live one is recorded) | How verified |
+|---|---|---|
+| Marlon | Twitch `marlon` | Twitch channel page |
+| Lacy | Twitch `lacy` → Kick `lacy` | Kick: verified, 103k followers |
+| Stable Ronaldo | Twitch `stableronaldo` → Kick `stableronaldo` | Kick: verified |
+| IShowSpeed | YouTube `UCWsDFcIhY2DBi3GB5uykGXA` (@IShowSpeed) → Twitch `ishowspeed` | YouTube canonical URL |
+| Kai Cenat | Twitch `kaicenat` | Twitch channel page |
+| Jynxzi | Twitch `jynxzi` | Twitch channel page |
+| JasonTheWeen | Twitch `jasontheween` | Twitch channel page |
+| Adin Ross | Kick `adinross` | Kick: verified, 3.2M followers |
+| Rakai | Twitch `2xrakai` (`twitch.tv/rakai` is a different person) | Twitch channel page |
+| Tota | Twitch `totaamc` | Twitch channel page |
+| Typical Gamer | YouTube `UC2wKfjlioOCLP4xQMOWNcgg` (@TypicalGamer) → Twitch `typicalgamer` | YouTube canonical URL |
+
+Kick accounts that only share a name (kaicenat, jynxzi, marlon, tota, typicalgamer, ishowspeed,
+jasontheween: unverified, few followers) are name squatters and are deliberately not monitored.
+
+How the watchlist is monitored:
+- **One recording per streamer:** a multistream is recorded once, from the first channel in
+  the list that is live.
+- **Platform switches:** when the recorded channel goes offline, the next check looks at the
+  other channels.
+- **Collaborations:** detected when another watchlist streamer is named in the title, in speech
+  or repeatedly in chat. The same moment seen from two streams is clipped only once.
+
+**Chat per platform**
+
+| Platform | Chat source | Needs |
+|---|---|---|
+| Twitch | official IRC over WebSocket (anonymous, read-only) | nothing |
+| Kick | official Kick Public API: `chat.message.sent` events delivered to `/webhooks/kick`, RSA-signature verified | free Kick developer app (`KICK_CLIENT_ID`/`SECRET`) + HTTPS |
+| YouTube | YouTube Data API `liveChatMessages.list`, within a daily quota budget | `YT_API_KEY` |
+
+Without a chat source, a stream is still recorded and clipped. Moments then need at least two of
+three strong signals: a facial expression change, body movement and an audio spike. A visible
+reaction is always required, and loudness alone never triggers a clip.
+
 ## How it works
 
 ### 1. Monitoring and recording
@@ -53,6 +96,34 @@ OpenCV, SQLite, FastAPI and Docker. You don't need any paid API.
   Detections close together are merged. Echoes within the cooldown are ignored, and a moment
   already covered by a clip is skipped.
 
+### 2b. Real-time face, expression and body language
+On every 2-second segment, AutoClipper decodes only the keyframe, which is about 10× cheaper
+than decoding every frame of a 1080p60 stream. YuNet finds the face, FER+ (ONNX Model Zoo, MIT)
+reads the expression (happiness, surprise, anger, fear, sadness) and frame differencing around
+the face measures body movement. These signals reinforce chat spikes and drive no-chat
+detection. Measured CPU use here: about 0.25 core per live stream including audio. Four
+simultaneous live streams ran at a load of 0.8 on 4 cores.
+
+### 2c. Context understanding
+Each candidate clip is classified from the transcript, chat, facial expressions, audio,
+category and title. The moment types are: funny, rage, argument, reaction, collab, emotional,
+controversial, donation, embarrassing, fail, impressive, discovery and meme. Every label lists
+its evidence (for example `chat: 41% laugh`, `streamer laughing (72%)`, `said: "no way"`).
+Ordinary conversation, meaning only weak cues and no clear chat explosion, is rejected. An
+optional local LLM (OpenAI-compatible, for example Ollama) can add a second opinion. Celebrity
+appearances are only recognised when they're named in speech, chat or the title; there is no
+face recognition of people.
+
+### 2d. GTA VI priority mode
+- **Detection:** GTA VI play is recognised from the stream category as reported by the
+  platform, for example "Grand Theft Auto VI" on Twitch and "Grand Theft Auto VI (GTA)" on
+  Kick. No streamer is assumed to play it.
+- **During the release period** (19 Nov 2026 plus 45 days, configurable): detection thresholds
+  drop to ×0.85, GTA moments are processed first, trend relevance is 90+, and titles and
+  hashtags are GTA-specific.
+- **GTA tags** come from speech and chat: first reaction, NPC, police chase, hidden location,
+  easter egg, realistic, glitch, secret mission, death, graphics, online, Vice City.
+
 ### 3. Clipping (runs during the stream)
 As soon as the 30 s after a moment have been recorded:
 1. The window from 30 s before to 30 s after is joined losslessly from the segments.
@@ -81,18 +152,35 @@ Word-by-word ASS subtitles, burned in with libass:
 - placed inside the TikTok/Reels/Shorts safe zone and **never over the face**. In the fit layout
   they sit on the blurred area, so no gameplay is covered.
 
-### 6. Score (0–100)
-| Component | Default weight | Measured from |
-|---|---|---|
-| Chat engagement | 25 | spike vs. baseline (ratio, z-score) |
-| Emotional intensity | 15 | audio spike, emphatic speech, shock/laugh chat |
-| Entertainment value | 20 | reaction mix, emote walls, "clip it" requests, laughter |
-| Opening hook | 15 | speech, interest and loudness in the first 3 s |
-| Retention potential | 15 | share of active seconds, length, where the payoff falls |
-| Uniqueness | 10 | difference from the streamer's recent clips, rarity of the spike |
+### Clip length (strict)
+- Ideal 20–40 s. Trimmed toward 45 s where possible. **Never longer than 60 s**: the cut
+  planner, the render check and the publish check each enforce this.
+- Shorter than 20 s is kept only if the score is ≥ 85.
+- Clips are never padded with unrelated footage. Context is extended only by a real earlier
+  sentence.
+- Silence and waiting/loading screens (static picture, no speech, no chat reaction) are
+  removed. The ending never cuts a word.
+- When the last second matches the opening frame, the clip ends there so it loops naturally.
 
-Clips scoring ≥ `priority_threshold` (80) are marked **priority** and sorted first. Clips below
-`min_score_to_keep` are auto-rejected. All weights and thresholds can be changed in the dashboard.
+### 6. Score (0–100, a prediction, not a view guarantee)
+| Component | Weight | Measured from |
+|---|---|---|
+| Opening hook | 20 | speech, interest and loudness in the first 3 s |
+| Entertainment value | 20 | moment type and evidence, chat reaction mix, emote walls, "clip it" |
+| Retention potential | 20 | active seconds, 20–40 s length, where the payoff falls |
+| Emotional intensity | 10 | audio spike, facial expression, emphatic speech, shock/laugh chat |
+| Chat engagement | 10 | spike vs. the streamer's own baseline |
+| Trend relevance | 10 | GTA VI release period, category performance of your published clips |
+| Originality | 5 | difference from recent clips, rarity of the spike |
+| Streamer popularity | 5 | live viewers / followers reported by the platform, your clip results |
+
+Tiers: **95–100 immediate**, **90–94 very high** (both published as soon as limits allow),
+**85–89 high**, **80–84 normal** (next posting time), **70–79 saved for review**, **below 70
+auto-rejected**. All of these are configurable under Settings → scoring.
+
+Speed target: 60–180 s from the moment to a finished clip. AutoClipper waits only 15 s after
+the moment, Whisper uses greedy decoding with names and GTA terms as a spelling prompt, and two
+clip workers run in parallel. The time is measured and shown for every clip.
 
 ### 7. Metadata
 Every clip gets a title, a hook (also burned in for the first 2.5 s), a description with credit,
@@ -159,6 +247,13 @@ for at most 5 users per 24 h. TikTok also caps posting at about 15 posts per cre
 For hands-off TikTok posting use the Buffer route.
 
 ### 10. Analytics and learning
+Besides views, likes, comments and shares: the engagement rate, average % viewed (YouTube; a
+completion proxy), subscribers gained, and performance by streamer, style, moment type, GTA vs
+other, clip length (0–20, 20–30, 30–40, 40–45, 45–60 s), tier and posting hour.
+**Resource allocation**: each streamer gets a weight from real results (1.0 = average, no data =
+1.0). Higher weights get their moments processed first. When the CPU is busy, the weakest
+performers record at 720p60, while GTA VI streams always stay at full quality.
+
 The worker fetches, every 3 h: YouTube views, likes and comments (Data API), plus watch time,
 average % viewed and subscribers gained (YouTube Analytics API); TikTok views, likes, comments
 and shares (`video.list` scope); Buffer post metrics; Instagram likes and comments. **Missing
@@ -317,3 +412,14 @@ python tests/e2e_live.py <live_twitch_channel> 600 --sensitive   # full run agai
 - "Viral" is a prediction from measured signals, not a guarantee. Use the approval queue.
 - Respect creators: credit them (done automatically), honour takedown requests and only publish
   with permission.
+- **YouTube live** (IShowSpeed, Typical Gamer): recording uses Streamlink's YouTube plugin. Both
+  channels were offline during testing, so YouTube recording hasn't been seen live from this
+  server. YouTube sometimes asks datacenter IPs to "confirm you're not a bot"; if that happens,
+  the streamer is still caught when they stream on Twitch (both have Twitch channels in the
+  watchlist).
+- **Kick chat** needs your free Kick developer app. The webhook signature check is tested with
+  real RSA signatures, but no real Kick chat event has been received yet, because that requires
+  your app. Until then, Kick streams use face, body language and audio.
+- **Context understanding** is evidence-based (speech, chat, face, audio), not a general video AI.
+  Expression recognition (FER+) is coarse. Visual game events (for example a police chase) are
+  recognised from what streamers and chat say, not from the picture itself.
