@@ -82,6 +82,7 @@ class Manager:
     # ---- lifecycle ---------------------------------------------------------
     async def start(self) -> None:
         self.loop = asyncio.get_running_loop()
+        self._wake = asyncio.Event()
         for s in self.cfg.get("streamers") or []:
             if isinstance(s, str):
                 self.db.add_streamer(s)
@@ -160,7 +161,11 @@ class Manager:
                         await self._go_offline(st)
 
             await asyncio.gather(*(check(r) for r in rows))
-            await asyncio.sleep(float(self.cfg.get("live_check_interval_sec")))
+            self._wake.clear()
+            try:  # sleep until the next interval, or until a streamer is added
+                await asyncio.wait_for(self._wake.wait(), float(self.cfg.get("live_check_interval_sec")))
+            except asyncio.TimeoutError:
+                pass
 
     async def _go_live(self, st: StreamerState) -> None:
         rc = self.cfg["recording"]
@@ -318,6 +323,8 @@ class Manager:
             raise ValueError("platform must be twitch, kick or youtube")
         self.db.add_streamer(login, platform, rights)
         self.state(login)
+        if self.loop:
+            self.loop.call_soon_threadsafe(self._wake.set)
 
     async def remove_streamer(self, login: str) -> None:
         st = self.states.pop(login, None)

@@ -125,6 +125,31 @@ def render_clip(src: Path, keep: list[tuple[float, float]], plan: LayoutPlan, as
     ])
 
 
+def measure_lufs(path: Path) -> float | None:
+    p = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", str(path), "-map", "0:a:0",
+                        "-af", "ebur128", "-f", "null", "-"], capture_output=True, text=True, timeout=300)
+    for line in reversed(p.stderr.splitlines()):
+        line = line.strip()
+        if line.startswith("I:") and "LUFS" in line:
+            return float(line.split()[1])
+    return None
+
+
+def correct_loudness(path: Path, target: float, tolerance: float = 0.7) -> float | None:
+    """Single-pass loudnorm undershoots on short clips; fix the remaining gap with a gain
+    change plus a true-peak limiter. Only audio is re-encoded."""
+    lufs = measure_lufs(path)
+    if lufs is None or abs(lufs - target) <= tolerance:
+        return lufs
+    gain = max(-12.0, min(12.0, target - lufs))
+    tmp = path.with_suffix(".tmp.mp4")
+    run_ffmpeg(["-i", str(path), "-map", "0:v", "-map", "0:a", "-c:v", "copy",
+                "-af", f"volume={gain:.2f}dB,alimiter=limit=0.84:level=false", "-c:a", "aac", "-b:a", "192k",
+                "-movflags", "+faststart", str(tmp)])
+    tmp.replace(path)
+    return measure_lufs(path)
+
+
 def make_thumbnail(video: Path, t: float, out: Path) -> None:
     run_ffmpeg(["-ss", f"{max(0.0, t):.2f}", "-i", str(video), "-frames:v", "1", "-q:v", "3", str(out)])
 

@@ -196,6 +196,7 @@ class ClipPipeline:
         stem = f"{streamer}_{int(m['peak_t'])}_m{m['id']}"
         out = out_dir / f"{stem}.mp4"
         render.render_clip(src, keep, layout, ass_path, out, rc, work, fonts_dir="/usr/share/fonts")
+        render.correct_loudness(out, float(rc["loudness_lufs"]))
         thumb = out_dir / f"{stem}.jpg"
         render.make_thumbnail(out, peak_out, thumb)
         real_dur = render.probe_duration(out)

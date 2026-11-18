@@ -53,6 +53,7 @@ class LayoutPlan:
     track_x: list[tuple[float, float]] = field(default_factory=list)  # (t, x) keyframes
     top_h: int = 0                  # output height of the facecam panel (stack)
     face_out: Box | None = None     # face position in the output frame (for subtitle placement)
+    cam_rect: Box | None = None     # detected facecam overlay borders (source pixels)
     game_out: Box | None = None     # gameplay position in the output frame
 
 
@@ -87,7 +88,11 @@ class FaceDetector:
                 self.yunet = cv2.FaceDetectorYN.create(YUNET_PATH, "", (320, 320), 0.75, 0.3, 50)
             except cv2.error as e:
                 log.warning("YuNet unavailable (%s), using Haar cascade", e)
-        self.haar = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+        self.haar = None
+        if hasattr(cv2, "CascadeClassifier"):
+            self.haar = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+        if self.yunet is None and self.haar is None:
+            log.warning("no face detector available; using the full-gameplay layout")
 
     def detect(self, img: np.ndarray) -> list[tuple[Box, float]]:
         h, w = img.shape[:2]
@@ -97,6 +102,8 @@ class FaceDetector:
             if faces is None:
                 return []
             return [(Box(*f[:4]), float(f[-1])) for f in faces]
+        if self.haar is None:
+            return []
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         found = self.haar.detectMultiScale(gray, 1.1, 6, minSize=(28, 28))
         return [(Box(*map(float, f)), 0.8) for f in found]
@@ -131,6 +138,41 @@ def _cluster_faces(dets: list[tuple[float, Box]], n_frames: int, w: int) -> tupl
     med = Box(*(float(np.median([getattr(m, k) for m in best])) for k in ("x", "y", "w", "h")))
     times = {t for t, d in dets if abs(d.cx - med.cx) < w * 0.06 and abs(d.cy - med.cy) < w * 0.06}
     return med, len(times) / max(n_frames, 1)
+
+
+def _find_overlay(frames, fb: Box) -> Box | None:
+    """Find the borders of a facecam overlay: straight edges that stay in place while the
+    gameplay around them changes. Works at analysis resolution; returns None if unclear."""
+    if len(frames) < 3:
+        return None
+    g = np.stack([cv2.cvtColor(f, cv2.COLOR_BGR2GRAY).astype(np.int16) for _, f in frames])
+    h, w = g.shape[1:]
+    ex = np.median(np.abs(np.diff(g, axis=2)), axis=0)  # vertical edges  (h, w-1)
+    ey = np.median(np.abs(np.diff(g, axis=1)), axis=0)  # horizontal edges (h-1, w)
+    T = 18
+
+    def best(profile_fn, lo, hi):
+        lo, hi = int(max(lo, 0)), int(hi)
+        if hi - lo < 2:
+            return None
+        vals = [profile_fn(i) for i in range(lo, hi)]
+        i = int(np.argmax(vals))
+        return lo + i if vals[i] >= 0.75 else None
+
+    r0, r1 = int(max(fb.y - fb.h * 0.3, 0)), int(min(fb.y + fb.h * 1.3, h - 1))
+    colc = lambda x: float(np.mean(ex[r0:r1, x] > T))  # noqa: E731
+    left = best(colc, fb.x - fb.w * 5, fb.x - fb.w * 0.4)
+    right = best(colc, fb.x + fb.w * 1.4, min(fb.x + fb.w * 6, w - 1))
+    x0 = (left + 1) if left is not None else 0
+    x1 = (right + 1) if right is not None else w
+    rowc = lambda y: float(np.mean(ey[y, x0:x1] > T))  # noqa: E731
+    top = best(rowc, fb.y - fb.h * 4, fb.y - fb.h * 0.3)
+    bottom = best(rowc, fb.y + fb.h * 1.3, min(fb.y + fb.h * 6, h - 1))
+    y0 = (top + 1) if top is not None else 0
+    y1 = (bottom + 1) if bottom is not None else h
+    if (left is None and right is None) or (x1 - x0) >= w * 0.9:
+        return None
+    return Box(float(x0), float(y0), float(x1 - x0), float(y1 - y0))
 
 
 def _clamp_box(b: Box, bound: Box) -> Box:
@@ -170,6 +212,9 @@ def plan_layout(path: str, start: float, dur: float, out_w: int = 1080, out_h: i
         if rel_w >= 0.10 and not in_side or rel_w >= 0.16:
             _plan_track(plan, frames, det, s, out_w, out_h, start)
         else:
+            plan.cam_rect = _find_overlay(frames, face.scaled(1 / s))
+            if plan.cam_rect is not None:
+                plan.cam_rect = plan.cam_rect.scaled(s)
             _plan_stack(plan, out_w, out_h)
     else:
         _plan_fit(plan, out_w, out_h)
@@ -189,7 +234,16 @@ def _plan_stack(plan: LayoutPlan, out_w: int, out_h: int) -> None:
     cam_w = cam_h * aspect
     if cam_w > c.w:
         cam_w, cam_h = c.w, c.w / aspect
-    cam = _clamp_box(Box(face.cx - cam_w / 2, face.cy - cam_h * 0.45, cam_w, cam_h), c)
+    bound = c
+    r = plan.cam_rect
+    if r is not None and r.w >= face.w * 1.5 and r.h >= face.h * 1.5:
+        # crop inside the real facecam overlay so no gameplay or chat leaks into the panel
+        bound = r
+        if r.w / r.h > aspect:
+            cam_h, cam_w = r.h, r.h * aspect
+        else:
+            cam_w, cam_h = r.w, r.w / aspect
+    cam = _clamp_box(Box(face.cx - cam_w / 2, face.cy - cam_h * 0.45, cam_w, cam_h), bound)
     plan.cam = Box(_even(cam.x), _even(cam.y), _even(cam.w), _even(cam.h))
     bot_h = out_h - top_h
     g_aspect = out_w / bot_h

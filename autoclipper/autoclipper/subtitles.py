@@ -122,6 +122,8 @@ def choose_placement(out_w: int, out_h: int, layout_kind: str, face_out: Box | N
         return True
     y = next((c for c in cands if ok(c)), min(max(out_h * 0.7, safe_top + box_h / 2), safe_bot - box_h / 2))
     hook_c = [safe_top + 110, out_h * 0.2]
+    if layout_kind == "stack":
+        hook_c = [top_h, top_h + 140]   # on the seam between facecam and gameplay
     if layout_kind == "fit" and game_out is not None:
         hook_c.insert(0, game_out.y - 140)
     hook_y = next((c for c in hook_c if c - 80 >= safe_top and abs(c - y) > box_h and

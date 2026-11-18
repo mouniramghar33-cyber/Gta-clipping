@@ -104,5 +104,5 @@ def score_clip(*, sig: dict, words, out_duration: float, interest_out: np.ndarra
     }
     wsum = sum(weights.get(k, 0) for k in comps) or 1
     total = sum(comps[k] * weights.get(k, 0) for k in comps) / wsum
-    comps = {k: round(v, 1) for k, v in comps.items()}
-    return round(total, 1), comps, expl, sorted(fp)
+    comps = {k: round(float(v), 1) for k, v in comps.items()}
+    return round(float(total), 1), comps, expl, sorted(fp)
