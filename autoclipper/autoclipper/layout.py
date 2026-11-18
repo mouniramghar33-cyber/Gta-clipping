@@ -149,15 +149,18 @@ def _find_overlay(frames, fb: Box) -> Box | None:
     h, w = g.shape[1:]
     ex = np.median(np.abs(np.diff(g, axis=2)), axis=0)  # vertical edges  (h, w-1)
     ey = np.median(np.abs(np.diff(g, axis=1)), axis=0)  # horizontal edges (h-1, w)
-    T = 18
+    T = 10  # tuned on real streams: overlay borders stay above this in >85% of rows
 
     def best(profile_fn, lo, hi):
         lo, hi = int(max(lo, 0)), int(hi)
         if hi - lo < 2:
             return None
-        vals = [profile_fn(i) for i in range(lo, hi)]
+        vals = np.array([profile_fn(i) for i in range(lo, hi)])
         i = int(np.argmax(vals))
-        return lo + i if vals[i] >= 0.75 else None
+        others = np.concatenate([vals[: max(0, i - 3)], vals[i + 4:]])
+        runner_up = float(others.max()) if len(others) else 0.0
+        # must be a long straight line AND clearly stronger than any other line nearby
+        return lo + i if vals[i] >= 0.7 and vals[i] - runner_up >= 0.2 else None
 
     r0, r1 = int(max(fb.y - fb.h * 0.3, 0)), int(min(fb.y + fb.h * 1.3, h - 1))
     colc = lambda x: float(np.mean(ex[r0:r1, x] > T))  # noqa: E731
@@ -230,7 +233,8 @@ def _plan_stack(plan: LayoutPlan, out_w: int, out_h: int) -> None:
     plan.top_h = top_h
     face, c = plan.face, plan.content
     aspect = out_w / top_h
-    cam_h = min(face.h * 3.2, c.h)
+    # without detected borders, stay tight around the face so less background leaks in
+    cam_h = min(face.h * (3.2 if plan.cam_rect is not None else 2.6), c.h)
     cam_w = cam_h * aspect
     if cam_w > c.w:
         cam_w, cam_h = c.w, c.w / aspect

@@ -130,7 +130,10 @@ def plan_cut(duration: float, ev0: float, ev1: float, peak_hint: float,
 
     keep = [(start, end)]
     if remove_silence:
-        keep = _remove_dead_air(start, end, t, speech, an, interest, min_silence, keep_silence, peak)
+        trimmed = _remove_dead_air(start, end, t, speech, an, interest, min_silence, keep_silence, peak)
+        # removing dead air must not push the clip under the minimum length
+        if sum(b - a for a, b in trimmed) >= min(min_sec, end - start):
+            keep = trimmed
     return CutPlan(start, end, peak, keep, interest)
 
 
