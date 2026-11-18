@@ -72,8 +72,29 @@ def _sendcmd_file(plan: LayoutPlan, keep_start: float, path: Path) -> None:
     path.write_text("\n".join(lines) + "\n")
 
 
+def zoom_expr(keep: list[tuple[float, float]], peak_out: float | None, peak_zoom: float,
+              jumpcut: bool) -> str | None:
+    """Per-frame zoom factor (output time t): a short punch-in on the peak, and an alternating
+    6% zoom on every cut made by dead-air removal (a classic jump-cut treatment)."""
+    terms = []
+    if peak_zoom > 0 and peak_out is not None:
+        p = peak_out
+        terms.append(f"{peak_zoom:.3f}*clip((t-{p - 0.35:.3f})/0.2,0,1)*clip(({p + 1.9:.3f}-t)/0.45,0,1)")
+    if jumpcut and len(keep) > 1:
+        acc = 0.0
+        for i, (a, b) in enumerate(keep):
+            d = b - a
+            if i % 2 == 1:
+                terms.append(f"0.06*between(t,{acc:.3f},{acc + d:.3f})")
+            acc += d
+    return "1+" + "+".join(terms) if terms else None
+
+
 def render_clip(src: Path, keep: list[tuple[float, float]], plan: LayoutPlan, ass_path: Path,
-                out: Path, rcfg: dict, work: Path, fonts_dir: str | None = None) -> None:
+                out: Path, rcfg: dict, work: Path, fonts_dir: str | None = None,
+                style: dict | None = None, peak_out: float | None = None,
+                sfx_at: float | None = None) -> None:
+    style = style or {}
     W, H = rcfg["width"], rcfg["height"]
     _, _, src_fps = probe_size(str(src))
     fps = min(int(rcfg["fps"]), int(round(src_fps)) or 30)
@@ -90,7 +111,10 @@ def render_clip(src: Path, keep: list[tuple[float, float]], plan: LayoutPlan, as
     f.append(f"[0:a]aresample=48000,asplit={k}" + "".join(f"[as{i}]" for i in range(k)))
     for i, (a, b) in enumerate(keep):
         f.append(f"[vs{i}]trim=start={a:.3f}:end={b:.3f},setpts=PTS-STARTPTS[v{i}]")
-        f.append(f"[as{i}]atrim=start={a:.3f}:end={b:.3f},asetpts=PTS-STARTPTS[a{i}]")
+        fades = ""
+        if k > 1 and b - a > 0.1:  # tiny fades so cuts don't click
+            fades = f",afade=t=in:d=0.015,afade=t=out:st={b - a - 0.015:.3f}:d=0.015"
+        f.append(f"[as{i}]atrim=start={a:.3f}:end={b:.3f},asetpts=PTS-STARTPTS{fades}[a{i}]")
     f.append("".join(f"[v{i}][a{i}]" for i in range(k)) + f"concat=n={k}:v=1:a=1[vc][ac]")
 
     if plan.kind == "stack":
@@ -113,11 +137,30 @@ def render_clip(src: Path, keep: list[tuple[float, float]], plan: LayoutPlan, as
         f.append(f"[vc]scale={W}:{H}:flags=lanczos,setsar=1[v0]")
 
     ass = str(ass_path).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+    z = zoom_expr(keep, peak_out, float(style.get("zoom_peak", 0) or 0), bool(style.get("jumpcut_zoom")))
+    if z:
+        f.append(f"[v0]scale=w='trunc({W}*({z})/2)*2':h='trunc({H}*({z})/2)*2':eval=frame:flags=bicubic,"
+                 f"crop={W}:{H}:'(iw-{W})/2':'(ih-{H})/2'[vz]")
+        vin = "[vz]"
+    else:
+        vin = "[v0]"
     sub = f"subtitles='{ass}'" + (f":fontsdir='{fonts_dir}'" if fonts_dir else "")
-    f.append(f"[v0]{sub},format=yuv420p[v]")
-    f.append(f"[ac]loudnorm=I={rcfg['loudness_lufs']}:TP=-1.5:LRA=11,aresample=48000[a]")
+    f.append(f"{vin}{sub},format=yuv420p[v]")
+    inputs = ["-i", str(src)]
+    if style.get("sfx") and sfx_at is not None:
+        # procedurally generated whoosh (no third-party sound files / licences needed)
+        inputs += ["-f", "lavfi", "-i", "anoisesrc=d=0.6:c=pink:a=0.6:r=48000"]
+        vol = float(style.get("sfx_volume", 0.35))
+        ms = max(0, int((sfx_at - 0.35) * 1000))
+        f.append(f"[1:a]highpass=f=500,lowpass=f=7000,afade=t=in:d=0.3,afade=t=out:st=0.3:d=0.3,"
+                 f"volume={vol:.2f},adelay={ms}|{ms},aformat=channel_layouts=stereo[sfx]")
+        f.append("[ac]aformat=channel_layouts=stereo[acs];[acs][sfx]amix=inputs=2:duration=first:normalize=0[am]")
+        ain = "[am]"
+    else:
+        ain = "[ac]"
+    f.append(f"{ain}loudnorm=I={rcfg['loudness_lufs']}:TP=-1.5:LRA=11,aresample=48000[a]")
     run_ffmpeg([
-        "-i", str(src), "-filter_complex", ";".join(f), "-map", "[v]", "-map", "[a]",
+        *inputs, "-filter_complex", ";".join(f), "-map", "[v]", "-map", "[a]",
         "-c:v", "libx264", "-preset", rcfg["preset"], "-crf", str(rcfg["crf"]),
         "-profile:v", "high", "-pix_fmt", "yuv420p", "-r", str(fps),
         "-c:a", "aac", "-b:a", rcfg["audio_bitrate"], "-ar", "48000",

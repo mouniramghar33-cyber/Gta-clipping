@@ -13,17 +13,24 @@ from datetime import datetime
 import httpx
 
 _token: dict = {"value": None, "exp": 0.0}
+_get = os.environ.get
+
+
+def configure(getter) -> None:
+    """Read credentials through the vault (env first, then values saved in the setup wizard)."""
+    global _get
+    _get = getter
 
 
 def enabled() -> bool:
-    return bool(os.environ.get("TWITCH_CLIENT_ID") and os.environ.get("TWITCH_CLIENT_SECRET"))
+    return bool(_get("TWITCH_CLIENT_ID") and _get("TWITCH_CLIENT_SECRET"))
 
 
 def _app_token() -> str:
     if _token["value"] and time.time() < _token["exp"] - 300:
         return _token["value"]
     r = httpx.post("https://id.twitch.tv/oauth2/token", data={
-        "client_id": os.environ["TWITCH_CLIENT_ID"], "client_secret": os.environ["TWITCH_CLIENT_SECRET"],
+        "client_id": _get("TWITCH_CLIENT_ID"), "client_secret": _get("TWITCH_CLIENT_SECRET"),
         "grant_type": "client_credentials"}, timeout=30)
     r.raise_for_status()
     d = r.json()
@@ -38,7 +45,7 @@ def live_streams(logins: list[str]) -> dict[str, dict]:
         batch = logins[i:i + 100]
         r = httpx.get("https://api.twitch.tv/helix/streams",
                       params=[("user_login", l) for l in batch] + [("first", "100")],
-                      headers={"Client-Id": os.environ["TWITCH_CLIENT_ID"],
+                      headers={"Client-Id": _get("TWITCH_CLIENT_ID"),
                                "Authorization": f"Bearer {_app_token()}"}, timeout=30)
         r.raise_for_status()
         for s in r.json().get("data", []):

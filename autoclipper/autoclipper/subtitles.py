@@ -134,7 +134,7 @@ def choose_placement(out_w: int, out_h: int, layout_kind: str, face_out: Box | N
 
 def build_ass(words: list[Word], keep: list[tuple[float, float]], important: set[int],
               placement: Placement, sub_cfg: dict, out_w: int, out_h: int,
-              hook_text: str | None = None, hook_sec: float = 2.5) -> str:
+              hook_text: str | None = None, hook_sec: float = 2.5, animation: str = "none") -> str:
     font = sub_cfg["font"] if font_available(sub_cfg["font"]) else sub_cfg["fallback_font"]
     white = ass_color(sub_cfg["text_color"])
     yellow = ass_color(sub_cfg["highlight_color"])
@@ -184,7 +184,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     col = yellow if wd[3] else white
                     alpha = "&H00&" if id(wd) in spoken else "&HFF&"
                     txt = _escape(wd[2])
-                    toks.append(f"{{\\1c{col}\\alpha{alpha}}}{txt}")
+                    pop = ""
+                    if animation == "pop" and wd is w:  # the word being spoken right now pops in
+                        pop = "\\fscx122\\fscy122\\t(0,110,\\fscx100\\fscy100)"
+                    toks.append(f"{{\\1c{col}\\alpha{alpha}{pop}}}{txt}{{\\fscx100\\fscy100}}")
                 parts.append(" ".join(toks))
             text = "\\N".join(parts)
             events.append(f"Dialogue: 0,{_ts(t0)},{_ts(t1)},Sub,,0,0,0,,{{\\pos({x},{placement.y})}}{text}")

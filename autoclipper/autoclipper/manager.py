@@ -17,7 +17,9 @@ from .chat import TwitchChat
 from .config import Config
 from .db import DB
 from .detector import Moment, StreamDetector
-from .publishers import PublishError, TokenStore, all_publishers
+from .notify import Notifier
+from .publishing import Engine
+from .secure import Vault
 from .recorder import Recorder, Segment, SegmentStore, check_live
 from .signals import AUDIO_HOP, VIDEO_FPS, segment_features
 
@@ -53,8 +55,10 @@ class Manager:
         self.publish_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="publish")
         self.inflight: set[int] = set()
         self.tasks: list[asyncio.Task] = []
-        self.tokens = TokenStore(cfg.data_dir / "secrets" / "tokens.json")
-        self.publishers = all_publishers(self.tokens)
+        self.vault = Vault(cfg.data_dir, db)
+        self.notifier = Notifier(cfg, db, self.vault)
+        self.engine = Engine(cfg, db, self.vault, self.notifier)
+        twitch_api.configure(self.vault.get)
         self.started_at = time.time()
         psutil.cpu_percent(interval=None)  # prime the counter so the first reading isn't 0
         self.data_size = 0
@@ -297,6 +301,16 @@ class Manager:
                 size = sum(os.path.getsize(p) for p in (c["path"], c["thumb"]) if p and os.path.exists(p))
                 removed_clips += self._delete_clip_files(c)
                 self.data_size -= size
+        # clip masters (source + edit decisions) are only needed while a clip may still be
+        # (re)rendered for an account: keep them while jobs are open, at most master_retention_days
+        mdays = float(cfg.get("storage.master_retention_days") or 3)
+        for c in db.query("SELECT id, master_dir, created_at FROM clips WHERE master_dir IS NOT NULL AND master_dir!=''"):
+            open_jobs = db.one(f"SELECT COUNT(*) n FROM publish_jobs WHERE clip_id=? AND status IN "
+                               f"('awaiting_approval','scheduled','uploading')", (c["id"],))["n"]
+            if (now - c["created_at"] > mdays * 86400 and not open_jobs) or \
+                    db.one("SELECT status FROM clips WHERE id=?", (c["id"],))["status"] in ("rejected", "deleted"):
+                shutil.rmtree(c["master_dir"], ignore_errors=True)
+                db.execute("UPDATE clips SET master_dir='' WHERE id=?", (c["id"],))
         db.execute("DELETE FROM chat_bins WHERE t<?", (now - 3 * 86400,))
         for d in cfg.work_dir.glob("m*"):
             if d.is_dir() and now - d.stat().st_mtime > 3600 and int(d.name[1:] or 0) not in self.inflight:
@@ -308,9 +322,16 @@ class Manager:
                 "data_bytes": self.data_size}
 
     def _delete_clip_files(self, c: dict) -> int:
-        for p in (c["path"], c["thumb"]):
+        if self.db.one("SELECT COUNT(*) n FROM publish_jobs WHERE clip_id=? AND status IN "
+                       "('awaiting_approval','scheduled','uploading','processing')", (c["id"],))["n"]:
+            return 0  # still needed for publishing
+        variants = [v["path"] for v in self.db.query("SELECT path FROM clip_variants WHERE clip_id=?", (c["id"],))]
+        for p in (c["path"], c["thumb"], *variants):
             if p and os.path.exists(p):
                 os.remove(p)
+        if c.get("master_dir"):
+            shutil.rmtree(c["master_dir"], ignore_errors=True)
+        self.db.execute("DELETE FROM clip_variants WHERE clip_id=?", (c["id"],))
         self.db.execute("UPDATE clips SET status=CASE WHEN status='published' THEN 'published' ELSE 'deleted' END, "
                         "path='' WHERE id=?", (c["id"],))
         return 1
@@ -333,56 +354,17 @@ class Manager:
             await self._go_offline(st)
         self.db.execute("DELETE FROM streamers WHERE login=?", (login,))
 
-    # ---- publishing --------------------------------------------------------------
+    # ---- publishing (the worker process uploads; here we only plan) ----------------
     def after_clip(self, clip_id: int) -> None:
-        pc = self.cfg["publishing"]
-        if pc["mode"] != "auto":
+        c = self.db.one("SELECT * FROM clips WHERE id=?", (clip_id,))
+        if not c:
             return
-        c = self.db.one("SELECT * FROM clips WHERE id=?", (clip_id,))
-        s = self.db.one("SELECT * FROM streamers WHERE login=?", (c["streamer"],))
-        if not c or c["score"] < pc["auto_min_score"] or not s or not s["rights_granted"]:
-            return
-        self.db.update("clips", clip_id, {"status": "approved", "decided_at": time.time()})
-        for platform, on in pc["platforms"].items():
-            if on and self.publishers[platform].configured():
-                self.publish_pool.submit(self._publish, clip_id, platform)
-
-    def request_publish(self, clip_id: int, platform: str, confirm_rights: bool) -> int:
-        c = self.db.one("SELECT * FROM clips WHERE id=?", (clip_id,))
-        if not c or not c["path"] or not os.path.exists(c["path"]):
-            raise ValueError("clip file not found")
-        if c["status"] not in ("approved", "published"):
-            raise ValueError("approve the clip before publishing")
-        if platform not in self.publishers:
-            raise ValueError("unknown platform")
-        if not self.publishers[platform].configured():
-            raise ValueError(f"{platform} credentials are not configured")
-        s = self.db.one("SELECT rights_granted FROM streamers WHERE login=?", (c["streamer"],))
-        if not confirm_rights and not (s and s["rights_granted"]):
-            raise ValueError("confirm that you have the rights/permission to publish this content")
-        pid = self.db.insert("publications", {"clip_id": clip_id, "platform": platform, "status": "queued",
-                                              "created_at": time.time(), "updated_at": time.time()})
-        self.publish_pool.submit(self._publish, clip_id, platform, pid)
-        return pid
-
-    def _publish(self, clip_id: int, platform: str, pid: int | None = None) -> None:
-        if pid is None:
-            pid = self.db.insert("publications", {"clip_id": clip_id, "platform": platform, "status": "queued",
-                                                  "created_at": time.time(), "updated_at": time.time()})
-        c = self.db.one("SELECT * FROM clips WHERE id=?", (clip_id,))
-        self.db.update("publications", pid, {"status": "uploading", "updated_at": time.time()})
-        base = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
-        public_url = f"{base}/public/{c['public_token']}.mp4" if base else None
+        if c["score"] >= float(self.cfg.get("notifications.viral_score")):
+            self.notifier.send("viral_clip", f"🔥 Viral clip ({c['score']:.0f}/100) from {c['streamer']}: {c['title']}")
         try:
-            rid, url = self.publishers[platform].publish(c, Path(c["path"]), public_url, self.cfg)
-            self.db.update("publications", pid, {"status": "done", "remote_id": rid, "url": url,
-                                                 "updated_at": time.time()})
-            self.db.update("clips", clip_id, {"status": "published"})
-            log.info("clip %s published to %s: %s", clip_id, platform, url or rid)
-        except (PublishError, Exception) as e:  # noqa: BLE001
-            log.warning("publishing clip %s to %s failed: %s", clip_id, platform, e)
-            self.db.update("publications", pid, {"status": "failed", "error": str(e)[:500],
-                                                 "updated_at": time.time()})
+            self.engine.plan_clip(clip_id)
+        except Exception:  # noqa: BLE001 - planning problems must never break clipping
+            log.exception("planning clip %s failed", clip_id)
 
     # ---- status ------------------------------------------------------------------
     def status(self) -> dict:
@@ -420,7 +402,14 @@ class Manager:
                        "load": os.getloadavg(), "mem_used": vm.used, "mem_total": vm.total,
                        "disk_used": du.used, "disk_total": du.total, "data_bytes": self.data_size,
                        "uptime": now - self.started_at},
-            "publishers": {k: p.configured() for k, p in self.publishers.items()},
+            "publishers": {k: p.configured() for k, p in self.engine.providers.items()},
+            "worker": self.db.kv_get("worker_heartbeat"),
+            "publishing": {"dry_run": self.cfg.get("publishing.dry_run"),
+                           "emergency_stop": self.cfg.get("publishing.emergency_stop"),
+                           "awaiting_approval": self.db.one("SELECT COUNT(*) n FROM publish_jobs WHERE "
+                                                            "status='awaiting_approval'")["n"],
+                           "scheduled": self.db.one("SELECT COUNT(*) n FROM publish_jobs WHERE "
+                                                    "status='scheduled'")["n"]},
         }
 
 

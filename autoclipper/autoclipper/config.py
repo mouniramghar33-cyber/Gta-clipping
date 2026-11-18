@@ -83,6 +83,7 @@ DEFAULTS: dict[str, Any] = {
         "loudness_lufs": -14,
         "workers": 1,               # parallel clip renders (CPU heavy)
         "burn_hook": True,          # show the hook text for the first seconds
+        "default_style": "clean",   # style of the preview render (accounts can use others)
         "hook_sec": 2.5,
     },
     "subtitles": {
@@ -109,16 +110,53 @@ DEFAULTS: dict[str, Any] = {
         "llm_model": "",
     },
     "publishing": {
-        "mode": "manual",           # manual | auto
-        "auto_min_score": 85,
-        "platforms": {"youtube": False, "tiktok": False, "instagram": False},
-        "youtube_privacy": "private",
-        "tiktok_privacy": "SELF_ONLY",
+        # Global safety switches (also on the dashboard header).
+        "dry_run": True,            # everything except the actual upload; turn off when ready
+        "emergency_stop": False,    # stops all uploads immediately
+        # Defaults for new accounts (each account can override them).
+        "min_score": 80,
+        "daily_limit": 3,
+        "min_interval_min": 120,
+        "posting_times": ["12:30", "16:30", "19:30", "22:00"],
+        "timezone": "Europe/Amsterdam",
+        "max_attempts": 6,
+        "youtube_daily_uploads": 100,   # API project quota for videos.insert (default bucket)
+        "youtube_privacy": "public",
+        "youtube_category": "20",       # Gaming
         "credit_template": "🎥 twitch.tv/{streamer}",
+        "require_rights": True,         # auto-publish only streamers marked "rights granted"
+        "public_link_days": 7,          # lifetime of the private link providers download from
+    },
+    "styles": {
+        "clean": {"label": "Clean", "hook": True, "caption_animation": "pop", "font_size": 82,
+                  "uppercase": False, "highlight_color": "#FFE600", "zoom_peak": 0.0,
+                  "jumpcut_zoom": False, "sfx": False, "layout": "auto"},
+        "energetic": {"label": "Energetic", "hook": True, "caption_animation": "pop", "font_size": 88,
+                      "uppercase": True, "highlight_color": "#FFE600", "zoom_peak": 0.14,
+                      "jumpcut_zoom": True, "sfx": True, "sfx_volume": 0.35, "layout": "auto"},
+        "minimal": {"label": "Minimal", "hook": False, "caption_animation": "none", "font_size": 72,
+                    "uppercase": False, "highlight_color": "#FFFFFF", "zoom_peak": 0.0,
+                    "jumpcut_zoom": False, "sfx": False, "layout": "auto"},
+    },
+    "notifications": {
+        "telegram": True,           # needs TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID
+        "events": {"upload_success": True, "upload_failed": True, "viral_clip": True,
+                   "account_problem": True, "approval_needed": True, "daily_summary": True},
+        "viral_score": 85,
+        "daily_summary_hour": 9,
+    },
+    "analytics": {
+        "enabled": True,
+        "interval_hours": 3,
+        "max_age_days": 30,
+        "learning": True,           # use results to adjust streamer priority, style and posting times
+        "min_samples": 3,
+        "explore_rate": 0.2,
     },
     "storage": {
         "max_storage_gb": 50,
         "rejected_retention_days": 3,
+        "master_retention_days": 3,
         "clip_retention_days": 30,
         "cleanup_interval_min": 10,
     },
@@ -148,6 +186,18 @@ class Config:
         if self.path.exists():
             self._overrides = yaml.safe_load(self.path.read_text()) or {}
         self._data = _deep_merge(DEFAULTS, self._overrides)
+
+    def reload(self) -> None:
+        """Re-read config.yaml if another process (dashboard) changed it."""
+        try:
+            mtime = self.path.stat().st_mtime
+        except FileNotFoundError:
+            return
+        if mtime != getattr(self, "_mtime", None):
+            with self._lock:
+                self._overrides = yaml.safe_load(self.path.read_text()) or {}
+                self._data = _deep_merge(DEFAULTS, self._overrides)
+                self._mtime = mtime
 
     def __getitem__(self, key: str) -> Any:
         with self._lock:
@@ -205,8 +255,22 @@ def validate(c: dict) -> None:
     w = c["scoring"]["weights"]
     if any((not isinstance(v, (int, float))) or v < 0 for v in w.values()) or sum(w.values()) <= 0:
         raise ValueError("scoring weights must be non-negative numbers with a positive sum")
-    if c["publishing"]["mode"] not in ("manual", "auto"):
-        raise ValueError("publishing.mode must be 'manual' or 'auto'")
+    p = c["publishing"]
+    if not 0 <= p["min_score"] <= 100:
+        raise ValueError("publishing.min_score must be 0-100")
+    if p["daily_limit"] < 0 or p["min_interval_min"] < 0 or p["max_attempts"] < 1:
+        raise ValueError("publishing limits must be positive")
+    for t in p["posting_times"]:
+        hh, _, mm = str(t).partition(":")
+        if not (hh.isdigit() and mm.isdigit() and int(hh) < 24 and int(mm) < 60):
+            raise ValueError(f"invalid posting time {t!r} (use HH:MM)")
+    try:
+        from zoneinfo import ZoneInfo
+        ZoneInfo(p["timezone"])
+    except Exception as e:  # noqa: BLE001
+        raise ValueError(f"unknown timezone {p['timezone']!r}") from e
+    if not c["styles"]:
+        raise ValueError("at least one style is required")
     cl = c["clip"]
     if not (5 <= cl["min_sec"] < cl["max_sec"] <= 180):
         raise ValueError("clip.min_sec/max_sec out of range")

@@ -1,18 +1,38 @@
+# Two long-running services from one image, sharing ./data:
+#   app    - live monitoring, recording, chat, detection, clip editing, dashboard
+#   worker - publishing queue, uploads, token refresh, analytics, notifications
+# Both restart automatically and keep running without any phone/PC/Claude session.
+x-common: &common
+  build: .
+  image: autoclipper:latest
+  restart: unless-stopped
+  env_file: .env                   # secrets (chmod 600), never committed
+  volumes:
+    - ./data:/data
+  logging:
+    driver: json-file
+    options: { max-size: "20m", max-file: "5" }
+
 services:
-  autoclipper:
-    build: .
-    image: autoclipper:latest
+  app:
+    <<: *common
     container_name: autoclipper
-    restart: unless-stopped          # restarts after crashes and server reboots
-    env_file: .env                   # secrets live here (chmod 600), never in config.yaml
     ports:
       - "8080:8080"
-    volumes:
-      - ./data:/data                 # config, database, clips, models, logs (persistent)
-    logging:
-      driver: json-file
-      options: { max-size: "20m", max-file: "5" }
     deploy:
       resources:
-        limits:
-          memory: 6g
+        limits: { memory: 6g }
+
+  worker:
+    <<: *common
+    container_name: autoclipper-worker
+    command: ["python", "-m", "autoclipper.worker"]
+    healthcheck:
+      test: ["CMD", "python", "-m", "autoclipper.worker", "health"]
+      interval: 60s
+      timeout: 15s
+      start_period: 60s
+      retries: 3
+    deploy:
+      resources:
+        limits: { memory: 3g }

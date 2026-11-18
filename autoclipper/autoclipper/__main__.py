@@ -11,10 +11,10 @@ import uvicorn
 from .config import Config
 
 
-def setup_logging(data_dir: Path) -> None:
+def setup_logging(data_dir: Path, filename: str = "autoclipper.log") -> None:
     (data_dir / "logs").mkdir(parents=True, exist_ok=True)
     fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
-    fh = logging.handlers.RotatingFileHandler(data_dir / "logs" / "autoclipper.log",
+    fh = logging.handlers.RotatingFileHandler(data_dir / "logs" / filename,
                                               maxBytes=20 * 1024 * 1024, backupCount=5)
     fh.setFormatter(fmt)
     sh = logging.StreamHandler()

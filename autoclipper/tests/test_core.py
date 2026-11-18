@@ -17,7 +17,7 @@ from autoclipper.chat import parse_irc  # noqa: E402
 from autoclipper.cut import map_time, plan_cut  # noqa: E402
 from autoclipper.detector import StreamDetector  # noqa: E402
 from autoclipper.layout import Box  # noqa: E402
-from autoclipper.publishers.tiktok import MB, chunk_plan  # noqa: E402
+from autoclipper.social.tiktok import MB, chunk_plan  # noqa: E402
 from autoclipper.scoring import score_clip  # noqa: E402
 from autoclipper.signals import classify, repetition_share  # noqa: E402
 from autoclipper.subtitles import Placement, _chunks, build_ass, choose_placement, important_words  # noqa: E402
@@ -191,7 +191,9 @@ def test_config_persist_and_validate(tmp_path):
     c.update({"detection": {"z_threshold": 4}})
     assert cfgmod.Config(tmp_path).get("detection.z_threshold") == 4
     with pytest.raises(ValueError):
-        c.update({"publishing": {"mode": "yolo"}})
+        c.update({"publishing": {"posting_times": ["25:99"]}})
+    with pytest.raises(ValueError):
+        c.update({"publishing": {"timezone": "Mars/Olympus"}})
     with pytest.raises(ValueError):
         c.update({"scoring": {"weights": {"chat_engagement": -1}}})
-    assert cfgmod.Config(tmp_path).get("publishing.mode") == "manual"
+    assert cfgmod.Config(tmp_path).get("publishing.dry_run") is True

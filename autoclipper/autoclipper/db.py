@@ -75,6 +75,85 @@ CREATE TABLE IF NOT EXISTS clips (
     decided_at REAL
 );
 CREATE INDEX IF NOT EXISTS clips_status ON clips(status);
+CREATE TABLE IF NOT EXISTS secrets (
+    name TEXT PRIMARY KEY,
+    value_enc TEXT NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS kv (
+    k TEXT PRIMARY KEY,
+    v TEXT,
+    updated_at REAL
+);
+CREATE TABLE IF NOT EXISTS accounts (
+    id INTEGER PRIMARY KEY,
+    provider TEXT NOT NULL,          -- youtube | tiktok | buffer | uploadpost | instagram
+    platform TEXT NOT NULL,          -- where the video ends up: youtube | tiktok | instagram | ...
+    external_id TEXT NOT NULL,
+    username TEXT, display_name TEXT, avatar_url TEXT,
+    tokens_enc TEXT,                 -- Fernet-encrypted JSON
+    token_expires_at REAL, refresh_expires_at REAL,
+    status TEXT NOT NULL DEFAULT 'connected',   -- connected | expired | error | disconnected
+    status_message TEXT,
+    auto_publish INTEGER NOT NULL DEFAULT 0,
+    dry_run INTEGER NOT NULL DEFAULT 1,
+    daily_limit INTEGER NOT NULL DEFAULT 3,
+    min_interval_min INTEGER NOT NULL DEFAULT 120,
+    posting_times TEXT,              -- json ["12:00","18:30"] or "auto" / "immediate"
+    style TEXT NOT NULL DEFAULT 'clean',
+    streamers TEXT,                  -- json list, null = all
+    min_score REAL,
+    privacy TEXT,
+    ai_disclosure INTEGER NOT NULL DEFAULT 0,
+    settings TEXT,                   -- json, provider specific
+    created_at REAL NOT NULL, updated_at REAL NOT NULL,
+    UNIQUE(provider, external_id)
+);
+CREATE TABLE IF NOT EXISTS publish_jobs (
+    id INTEGER PRIMARY KEY,
+    clip_id INTEGER NOT NULL,
+    account_id INTEGER NOT NULL,
+    status TEXT NOT NULL,            -- awaiting_approval|scheduled|uploading|processing|published|failed|cancelled|dry_run|skipped
+    scheduled_at REAL,
+    title TEXT, description TEXT, hashtags TEXT,
+    options TEXT,                    -- json: privacy, interaction settings, disclosures...
+    style TEXT,
+    adjusted_score REAL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at REAL,
+    lease_until REAL,
+    upload_state TEXT,               -- json: resumable session, publish_id ...
+    remote_id TEXT, url TEXT, error TEXT,
+    public_token TEXT,
+    dry_run INTEGER NOT NULL DEFAULT 0,
+    approved_at REAL, published_at REAL,
+    created_at REAL NOT NULL, updated_at REAL NOT NULL,
+    UNIQUE(clip_id, account_id)
+);
+CREATE INDEX IF NOT EXISTS jobs_status ON publish_jobs(status, scheduled_at);
+CREATE TABLE IF NOT EXISTS metrics (
+    id INTEGER PRIMARY KEY,
+    job_id INTEGER NOT NULL,
+    fetched_at REAL NOT NULL,
+    age_hours REAL,
+    views INTEGER, likes INTEGER, comments INTEGER, shares INTEGER,
+    watch_time_min REAL, avg_view_pct REAL, subs_gained INTEGER,
+    raw TEXT
+);
+CREATE INDEX IF NOT EXISTS metrics_job ON metrics(job_id, fetched_at);
+CREATE TABLE IF NOT EXISTS clip_variants (
+    clip_id INTEGER NOT NULL,
+    style TEXT NOT NULL,
+    path TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    PRIMARY KEY (clip_id, style)
+);
+CREATE TABLE IF NOT EXISTS oauth_states (
+    state TEXT PRIMARY KEY,
+    provider TEXT NOT NULL,
+    verifier TEXT,
+    created_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS publications (
     id INTEGER PRIMARY KEY,
     clip_id INTEGER NOT NULL,
@@ -85,15 +164,26 @@ CREATE TABLE IF NOT EXISTS publications (
 );
 """
 
-JSON_FIELDS = {"signals", "scores", "hashtags"}
+JSON_FIELDS = {"signals", "scores", "hashtags", "options", "upload_state", "streamers", "settings",
+               "posting_times", "raw", "spec"}
+
+# Columns added after the first release (applied to existing databases on start).
+MIGRATIONS = {
+    "clips": {"master_dir": "TEXT", "top_cat": "TEXT", "category": "TEXT", "quote": "TEXT"},
+}
 
 
 class DB:
     def __init__(self, path: str | Path):
         self.path = str(path)
         self._local = threading.local()
-        with self.conn() as c:
-            c.executescript(SCHEMA)
+        c = self.conn()
+        c.executescript(SCHEMA)
+        for table, cols in MIGRATIONS.items():
+            have = {r[1] for r in c.execute(f"PRAGMA table_info({table})")}
+            for col, typ in cols.items():
+                if col not in have:
+                    c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
 
     def conn(self) -> sqlite3.Connection:
         c = getattr(self._local, "c", None)
@@ -138,6 +228,14 @@ class DB:
         data = {k: (json.dumps(v) if k in JSON_FIELDS and not isinstance(v, str) else v) for k, v in data.items()}
         sets = ",".join(f"{k}=?" for k in data)
         self.conn().execute(f"UPDATE {table} SET {sets} WHERE id=?", (*data.values(), row_id))
+
+    # ---- key/value -----------------------------------------------------
+    def kv_get(self, k: str, default=None):
+        r = self.one("SELECT v FROM kv WHERE k=?", (k,))
+        return json.loads(r["v"]) if r and r["v"] is not None else default
+
+    def kv_set(self, k: str, v) -> None:
+        self.execute("INSERT OR REPLACE INTO kv (k, v, updated_at) VALUES (?,?,?)", (k, json.dumps(v), time.time()))
 
     # ---- streamers -----------------------------------------------------
     def add_streamer(self, login: str, platform: str = "twitch", rights_granted: bool = False) -> None:

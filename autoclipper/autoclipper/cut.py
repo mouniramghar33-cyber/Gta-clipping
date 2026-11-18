@@ -69,7 +69,8 @@ def plan_cut(duration: float, ev0: float, ev1: float, peak_hint: float,
              chat: np.ndarray, audio: np.ndarray, motion: np.ndarray,
              words: list[Word], segments: list[tuple[float, float, str]],
              min_sec: float, max_sec: float, remove_silence: bool = True,
-             min_silence: float = 1.2, keep_silence: float = 0.3) -> CutPlan:
+             min_silence: float = 1.2, keep_silence: float = 0.3,
+             scene_cuts: list[float] | None = None) -> CutPlan:
     interest, speech, an = interest_curve(duration, chat, audio, motion, words)
     n = len(interest)
     t = np.arange(n) * STEP
@@ -110,6 +111,14 @@ def plan_cut(duration: float, ev0: float, ev1: float, peak_hint: float,
         talking = float(np.mean(speech[int(c / STEP): int((c + 2) / STEP) + 1])) if n else 0
         return abs(ctx - 9) / 6 - 1.2 * hook - 0.5 * talking
     start = min(cands, key=cost)
+
+    # Scene detection: if a hard scene change sits just after the opening / just before the
+    # ending, cut exactly on it so the clip doesn't start or end with a flash of another shot.
+    for c in scene_cuts or []:
+        if start < c <= start + 1.0 and c <= peak - 1.5:
+            start = c
+        if end - 1.0 <= c < end and c >= peak + 1.5:
+            end = c - 0.04
 
     # Length limits (quality first, but stay inside min/max).
     if end - start < min_sec:
@@ -163,6 +172,14 @@ def _remove_dead_air(start, end, t, speech, audio_n, interest, min_silence, keep
     if end - cur > 0.2:
         keep.append((cur, end))
     return [(round(a, 3), round(b, 3)) for a, b in keep if b - a > 0.1]
+
+
+def scene_cuts(motion: np.ndarray, fps: float) -> list[float]:
+    """Hard cuts from the per-frame motion series (mean abs difference of tiny gray frames)."""
+    if len(motion) < 3:
+        return []
+    thr = max(30.0, 5 * float(np.median(motion)))
+    return [round(i / fps, 2) for i in range(1, len(motion)) if motion[i] > thr]
 
 
 def map_time(t: float, keep: list[tuple[float, float]]) -> float | None:

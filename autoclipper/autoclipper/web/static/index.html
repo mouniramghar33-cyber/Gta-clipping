@@ -56,6 +56,18 @@ pre{white-space:pre-wrap;font-size:12px;color:var(--muted);max-height:520px;over
 .toast{position:fixed;right:16px;bottom:16px;background:var(--panel2);border:1px solid var(--line);padding:10px 14px;border-radius:10px;z-index:9}
 .legend{display:flex;gap:12px;font-size:12px;color:var(--muted)}
 .legend i{display:inline-block;width:10px;height:3px;margin-right:5px;vertical-align:middle}
+.modalbg{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:20;display:flex;align-items:flex-start;justify-content:center;overflow:auto;padding:24px 12px}
+.modal{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px;width:100%;max-width:560px}
+.modal video{width:100%;max-height:420px;background:#000;border-radius:10px}
+.av{width:36px;height:36px;border-radius:50%;object-fit:cover;background:var(--panel2);flex:none}
+.acc{display:grid;gap:10px}
+.step{display:flex;gap:12px;align-items:flex-start}
+.step .n{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:var(--panel2);font-weight:700;flex:none}
+.step.ok .n{background:rgba(53,208,127,.2);color:var(--good)}
+code{background:var(--bg);padding:2px 6px;border-radius:6px;font-size:12px;word-break:break-all}
+label.chk{display:flex;gap:8px;align-items:center;margin:4px 0}
+.full{width:100%}
+table{display:block;overflow-x:auto}
 @media (max-width:600px){main{padding:12px}.g2{grid-template-columns:1fr}.kv{grid-template-columns:1fr}}
 </style>
 </head>
@@ -66,13 +78,19 @@ pre{white-space:pre-wrap;font-size:12px;color:var(--muted);max-height:520px;over
     <button data-t="live" class="on">Live</button>
     <button data-t="clips">Clips</button>
     <button data-t="moments">Moments</button>
+    <button data-t="queue">Queue <span id="apprBadge" class="pill warn hidden"></span></button>
+    <button data-t="accounts">Accounts</button>
+    <button data-t="analytics">Analytics</button>
     <button data-t="streamers">Streamers</button>
     <button data-t="settings">Settings</button>
     <button data-t="system">System</button>
+    <button data-t="setup">Setup</button>
   </nav>
   <div class="sp"></div>
   <span id="chatPill" class="pill">chat …</span>
   <span id="queuePill" class="pill">queue …</span>
+  <span id="dryPill" class="pill warn hidden" title="Publishing runs in dry-run mode: nothing is uploaded">dry run</span>
+  <button id="stopBtn" class="b r" onclick="toggleStop()" title="Emergency stop: halts all uploads immediately">■ STOP</button>
 </header>
 <main>
   <section id="t-live">
@@ -118,6 +136,43 @@ pre{white-space:pre-wrap;font-size:12px;color:var(--muted);max-height:520px;over
     <div class="grid g2" id="settingsForm"></div>
   </section>
 
+  <section id="t-queue" class="hidden">
+    <div class="row sec">
+      <select id="jStatus" onchange="loadQueue()"><option value="">All jobs</option><option value="awaiting_approval">Waiting for approval</option>
+        <option value="scheduled">Scheduled</option><option value="processing">Processing</option><option value="published">Published</option>
+        <option value="failed">Failed</option><option value="dry_run">Dry run</option><option value="cancelled">Cancelled</option></select>
+      <span class="sp"></span><span class="muted small" id="jobCount"></span>
+    </div>
+    <div class="card"><table><thead><tr><th>Clip</th><th>Account</th><th>When</th><th>Status</th><th></th></tr></thead><tbody id="jobRows"></tbody></table></div>
+  </section>
+
+  <section id="t-accounts" class="hidden">
+    <div class="card sec">
+      <h3>Connect</h3>
+      <div class="row">
+        <a class="b p" href="/oauth/youtube/start" style="text-decoration:none">Connect YouTube</a>
+        <a class="b p" href="/oauth/tiktok/start" style="text-decoration:none">Connect TikTok</a>
+        <button class="b" onclick="importAcc('buffer')">Import Buffer channels</button>
+        <button class="b" onclick="importAcc('uploadpost')">Import Upload-Post profiles</button>
+        <button class="b" onclick="igDialog()">Add Instagram</button>
+      </div>
+      <p class="muted small">Credentials for these buttons are entered once in <b>Setup</b>. TikTok (official API) posts always wait for your one-tap approval in <b>Queue</b>, which TikTok requires. TikTok channels connected through Buffer post automatically. CapCut can't be connected: it has no API that exports finished videos from a server (details in Setup).</p>
+    </div>
+    <div class="grid g2" id="accCards"></div>
+  </section>
+
+  <section id="t-analytics" class="hidden">
+    <div class="row sec"><span class="muted small">Only numbers reported by the platforms are shown. Learning starts once a group has enough posts.</span><span class="sp"></span>
+      <button class="b" onclick="refreshAnalytics()">Fetch now</button></div>
+    <div class="grid g4 sec" id="anTotals"></div>
+    <div class="grid g2 sec" id="anGroups"></div>
+    <div class="card"><h3>Posts</h3><table><thead><tr><th>Post</th><th>Account</th><th>Views</th><th>Likes</th><th>Comments</th><th>Shares</th><th>Avg viewed</th></tr></thead><tbody id="anPosts"></tbody></table></div>
+  </section>
+
+  <section id="t-setup" class="hidden">
+    <div class="card" id="setupBody"></div>
+  </section>
+
   <section id="t-system" class="hidden">
     <div class="grid g4 sec" id="sysKpis"></div>
     <div class="grid g2">
@@ -128,6 +183,7 @@ pre{white-space:pre-wrap;font-size:12px;color:var(--muted);max-height:520px;over
     <div class="card" style="margin-top:14px"><h3>Logs</h3><pre id="logs"></pre></div>
   </section>
 </main>
+<div id="modal" class="modalbg hidden" onclick="if(event.target===this)closeModal()"><div class="modal" id="modalBody"></div></div>
 <div id="toast" class="toast hidden"></div>
 <script>
 const $=s=>document.querySelector(s);
@@ -147,7 +203,11 @@ let status=null;
 async function loadStatus(){
   status=await api('/api/status');
   $('#chatPill').className='pill '+(status.chat_connected?'ok':'bad');$('#chatPill').textContent=status.chat_connected?'chat connected':'chat offline';
-  $('#queuePill').textContent=`queue ${status.queue.queued} · rendering ${status.queue.processing}`;
+  $('#queuePill').textContent=`clips queued ${status.queue.queued} · rendering ${status.queue.processing}`;
+  const pb=status.publishing||{};$('#dryPill').classList.toggle('hidden',!pb.dry_run);
+  $('#stopBtn').textContent=pb.emergency_stop?'▶ Resume publishing':'■ STOP';$('#stopBtn').className='b '+(pb.emergency_stop?'g':'r');
+  stopped=!!pb.emergency_stop;const ab=$('#apprBadge');ab.textContent=pb.awaiting_approval||'';ab.classList.toggle('hidden',!pb.awaiting_approval);
+  if(!Object.keys(styles).length){try{styles=(await api('/api/settings')).styles||{}}catch(e){}}
 }
 
 function scoreCls(s){return s>=80?'s-hi':s>=55?'s-mid':'s-lo'}
@@ -201,7 +261,7 @@ async function loadClips(){
   $('#clipCount').textContent=rows.length+' clips';
   $('#clipGrid').innerHTML=rows.map(c=>{
     const sc=c.scores||{},comp=Object.entries(sc).filter(([k,v])=>typeof v==='number');
-    const pubs=(c.publications||[]).map(p=>`<span class="pill ${p.status==='done'?'ok':p.status==='failed'?'bad':'warn'}" title="${esc(p.error||p.url||'')}">${p.platform}: ${p.status}</span>`).join(' ');
+    const pubs=(c.jobs||[]).map(p=>`<span class="pill ${JOBCLS[p.status]??''}" title="${esc(p.error||p.url||'')}">${esc(p.display_name)}: ${p.status.replace('_',' ')}</span>`).join(' ');
     return `<div class="card clip">
       ${c.path?`<video src="/media/clip/${c.id}.mp4" poster="/media/thumb/${c.id}.jpg" controls preload="none" playsinline></video>`:'<div class="muted">file deleted</div>'}
       <div class="row" style="margin-top:8px"><span class="score ${scoreCls(c.score)}">${Math.round(c.score)}</span>
@@ -220,19 +280,218 @@ async function loadClips(){
         <button class="b r" onclick="decide(${c.id},'reject')">Reject</button>
         ${c.path?`<a class="b" style="text-decoration:none;padding:7px 12px;border-radius:9px;border:1px solid var(--line)" href="/media/clip/${c.id}.mp4?download=1">Download</a>`:''}
         <span class="sp"></span>
-        <select id="pp-${c.id}"><option value="youtube">YouTube</option><option value="tiktok">TikTok</option><option value="instagram">Instagram</option></select>
-        <button class="b p" onclick="publish(${c.id})" ${c.status==='approved'||c.status==='published'?'':'disabled title="approve first"'}>Publish</button>
+        <select id="vs-${c.id}" title="Render this clip in another style">${Object.keys(styles).map(k=>`<option>${esc(k)}</option>`).join('')}</select>
+        <button class="b" onclick="variant(${c.id})">Preview style</button>
+        <button class="b p" onclick="sendDialog(${c.id})">Send to accounts</button>
       </div><div class="row" style="margin-top:6px">${pubs}</div></div>`}).join('')||'<div class="muted">No clips yet.</div>';
   document.querySelectorAll('[contenteditable]').forEach(el=>el.onblur=async()=>{
     await api(`/api/clips/${el.dataset.id}`,{method:'PATCH',body:JSON.stringify({[el.dataset.f]:el.textContent.trim()})});toast('Saved')});
 }
 async function decide(id,a){await api(`/api/clips/${id}/${a}`,{method:'POST'});toast(a==='approve'?'Approved':'Rejected');loadClips()}
-async function publish(id){
-  const platform=$('#pp-'+id).value;
-  if(!confirm(`Publish clip ${id} to ${platform}?\n\nOnly continue if you have the rights/permission from the creator to publish this content.`))return;
-  try{await api(`/api/clips/${id}/publish`,{method:'POST',body:JSON.stringify({platform,confirm_rights:true})});toast('Publishing started');setTimeout(loadClips,1500)}
+let styles={},stopped=false,accCache=[];
+const fmtT=t=>t?new Date(t*1000).toLocaleString([], {weekday:'short',hour:'2-digit',minute:'2-digit',day:'numeric',month:'short'}):'-';
+function openModal(html){$('#modalBody').innerHTML=html;$('#modal').classList.remove('hidden')}
+function closeModal(){$('#modal').classList.add('hidden');$('#modalBody').innerHTML=''}
+async function variant(id){
+  const st=$('#vs-'+id).value;toast('Rendering '+st+' style… (takes about a minute)');
+  try{const r=await api(`/api/clips/${id}/variant/${st}`,{method:'POST'});
+    openModal(`<h3>Style: ${esc(st)}</h3><video src="${r.url}?t=${Date.now()}" controls autoplay playsinline></video><div class="row" style="margin-top:10px"><span class="sp"></span><a class="b" href="${r.url}" download>Download</a><button class="b" onclick="closeModal()">Close</button></div>`)}
   catch(e){toast(e.message)}
 }
+async function sendDialog(id){
+  accCache=await api('/api/accounts');
+  if(!accCache.length){toast('Connect an account first (Accounts tab)');return}
+  openModal(`<h3>Send clip ${id} to accounts</h3>
+    ${accCache.map(a=>`<label class="chk"><input type="checkbox" value="${a.id}" class="sendAcc" ${a.status!=='connected'?'disabled':''}>
+      ${a.avatar_url?`<img class="av" src="${esc(a.avatar_url)}">`:''}<span>${esc(a.display_name||a.username||a.external_id)} <span class="muted small">${a.platform} via ${a.provider}${a.status!=='connected'?' · '+a.status:''}</span></span></label>`).join('')}
+    <label class="chk" style="margin-top:10px"><input type="checkbox" id="sendRights"> I have the creator's permission / rights to publish this clip</label>
+    <p class="muted small">The clip is scheduled in each account's next free slot (daily limit, minimum interval, posting times). TikTok (official API) posts wait for approval.</p>
+    <div class="row"><span class="sp"></span><button class="b" onclick="closeModal()">Cancel</button><button class="b p" onclick="doSend(${id})">Queue</button></div>`)
+}
+async function doSend(id){
+  const ids=[...document.querySelectorAll('.sendAcc:checked')].map(x=>+x.value);
+  if(!ids.length){toast('Pick at least one account');return}
+  try{const r=await api(`/api/clips/${id}/send`,{method:'POST',body:JSON.stringify({account_ids:ids,confirm_rights:$('#sendRights').checked})});
+    closeModal();toast(r.results.map(x=>x.skipped?`skipped: ${x.skipped}`:`queued for ${fmtT(x.scheduled_at)}`).join(' · '))}
+  catch(e){toast(e.message)}
+}
+
+const JOBCLS={published:'ok',failed:'bad',awaiting_approval:'warn',scheduled:'',processing:'warn',uploading:'warn',dry_run:'ok',cancelled:''};
+async function loadQueue(){
+  const st=$('#jStatus').value;const rows=await api('/api/jobs'+(st?'?status='+st:''));
+  $('#jobCount').textContent=rows.length+' jobs';
+  $('#jobRows').innerHTML=rows.map(j=>`<tr>
+    <td><div class="row" style="flex-wrap:nowrap"><img src="/media/thumb/${j.clip_id}.jpg" style="width:42px;height:74px;object-fit:cover;border-radius:6px" onerror="this.style.display='none'">
+      <div><div style="font-weight:600">${esc(j.title)}</div><div class="muted small">${esc(j.streamer)} · score ${Math.round(j.adjusted_score??j.score)} · ${esc(j.style||'')}</div></div></div></td>
+    <td>${j.avatar_url?`<img class="av" src="${esc(j.avatar_url)}" style="width:24px;height:24px;vertical-align:middle"> `:''}${esc(j.display_name)}<div class="muted small">${j.platform} via ${j.provider}</div></td>
+    <td class="small">${fmtT(j.scheduled_at)}${j.attempts?`<div class="muted">attempt ${j.attempts}</div>`:''}</td>
+    <td><span class="pill ${JOBCLS[j.status]??''}">${j.status.replace('_',' ')}${j.progress!=null&&j.status==='uploading'?' '+j.progress+'%':''}</span>
+      ${j.url?`<div class="small"><a href="${esc(j.url)}" target="_blank" style="color:var(--blue)">open post</a></div>`:''}
+      ${j.error?`<div class="muted small">${esc(j.error).slice(0,160)}</div>`:''}</td>
+    <td style="white-space:nowrap">${j.status==='awaiting_approval'?`<button class="b p" onclick="approveDialog(${j.id})">Review</button>`:''}
+      ${['failed','dry_run'].includes(j.status)||(j.status==='scheduled'&&j.attempts)?`<button class="b" onclick="jobAct(${j.id},'retry')">Retry now</button>`:''}
+      ${['awaiting_approval','scheduled','failed','dry_run'].includes(j.status)?`<button class="b r" onclick="jobAct(${j.id},'cancel')">Cancel</button>`:''}</td></tr>`).join('')
+    ||'<tr><td colspan="5" class="muted">Nothing queued yet.</td></tr>';
+}
+async function jobAct(id,a){try{await api(`/api/jobs/${id}/${a}`,{method:'POST'});toast(a==='retry'?'Retrying':'Cancelled');loadQueue()}catch(e){toast(e.message)}}
+
+const PRIV={PUBLIC_TO_EVERYONE:'Everyone',MUTUAL_FOLLOW_FRIENDS:'Friends',FOLLOWER_OF_CREATOR:'Followers',SELF_ONLY:'Only me'};
+async function approveDialog(id){
+  let f;try{f=await api(`/api/jobs/${id}/approval`)}catch(e){toast(e.message);return}
+  const cr=f.creator;
+  if(!cr){ // non-TikTok approval (not currently required by other providers)
+    openModal(`<h3>Approve post</h3><video src="/media/clip/${f.clip_id}.mp4" controls playsinline></video>
+      <textarea id="apTitle" class="full" rows="3" style="margin-top:8px">${esc(f.job.title)}</textarea>
+      <div class="row" style="margin-top:10px"><span class="sp"></span><button class="b" onclick="closeModal()">Close</button><button class="b p" onclick="submitApproval(${id},false)">Approve</button></div>`);return}
+  openModal(`<div class="row"><img class="av" src="${esc(cr.creator_avatar_url||'')}"><div><b>${esc(cr.creator_nickname||'')}</b><div class="muted small">Posting to TikTok as @${esc(cr.creator_username||'')}</div></div></div>
+    <video src="/media/clip/${f.clip_id}.mp4" controls playsinline style="margin-top:10px"></video>
+    <label class="muted small" style="display:block;margin-top:10px">Caption</label>
+    <textarea id="apTitle" class="full" rows="3" maxlength="2200">${esc(f.caption)}</textarea>
+    <label class="muted small" style="display:block;margin-top:10px">Who can view this video</label>
+    <select id="apPriv" class="full" onchange="apCheck()"><option value="" selected disabled>Select…</option>
+      ${(cr.privacy_level_options||[]).map(p=>`<option value="${p}">${PRIV[p]||p}</option>`).join('')}</select>
+    <div style="margin-top:10px"><div class="muted small">Allow users to</div>
+      <label class="chk"><input type="checkbox" id="apCom" ${cr.comment_disabled?'disabled':''}> Comment${cr.comment_disabled?' <span class="muted small">(off in your TikTok settings)</span>':''}</label>
+      <label class="chk"><input type="checkbox" id="apDuet" ${cr.duet_disabled?'disabled':''}> Duet${cr.duet_disabled?' <span class="muted small">(off in your TikTok settings)</span>':''}</label>
+      <label class="chk"><input type="checkbox" id="apStitch" ${cr.stitch_disabled?'disabled':''}> Stitch${cr.stitch_disabled?' <span class="muted small">(off in your TikTok settings)</span>':''}</label></div>
+    <div style="margin-top:10px"><label class="chk"><input type="checkbox" id="apComm" onchange="apCheck()"> <b>Disclose video content</b></label>
+      <div id="apCommBox" class="hidden" style="margin-left:26px">
+        <p class="muted small">Your video will be labeled according to what you select.</p>
+        <label class="chk"><input type="checkbox" id="apBrand" onchange="apCheck()"> Your brand <span class="muted small">(promoting yourself or your own business)</span></label>
+        <label class="chk"><input type="checkbox" id="apBranded" onchange="apCheck()"> Branded content <span class="muted small">(promoting another brand or a third party)</span></label>
+        <p class="small" id="apLabel" style="color:var(--warn)"></p></div></div>
+    <p class="small muted" id="apDecl" style="margin-top:12px"></p>
+    <p class="small muted">After you post, it may take a few minutes for the video to process and appear on your profile.</p>
+    <div class="row" style="margin-top:8px"><select id="apWhen"><option value="slot">At planned time (${fmtT(f.job.scheduled_at)})</option><option value="now">Now</option></select>
+      <span class="sp"></span><button class="b" onclick="closeModal()">Later</button><button class="b p" id="apPost" disabled onclick="submitApproval(${id},true)">Post to TikTok</button></div>
+    <p class="muted small" id="apErr" style="color:var(--bad)"></p>`);
+  apCheck();
+}
+function apCheck(){
+  const comm=$('#apComm').checked,brand=$('#apBrand')?.checked,branded=$('#apBranded')?.checked,priv=$('#apPriv').value;
+  $('#apCommBox').classList.toggle('hidden',!comm);
+  const selfOnly=$('#apPriv').querySelector('option[value=SELF_ONLY]');
+  if(selfOnly){selfOnly.disabled=!!(comm&&branded);if(comm&&branded&&priv==='SELF_ONLY'){$('#apPriv').value='';toast('Branded content cannot be private')}}
+  $('#apLabel').textContent=comm?(branded?'Your video will be labeled as "Paid partnership".':brand?'Your video will be labeled as "Promotional content".':'Select at least one option.'):'';
+  const music='<a href="https://www.tiktok.com/legal/page/global/music-usage-confirmation/en" target="_blank" style="color:var(--blue)">Music Usage Confirmation</a>';
+  const bc='<a href="https://www.tiktok.com/legal/page/global/bc-policy/en" target="_blank" style="color:var(--blue)">Branded Content Policy</a>';
+  $('#apDecl').innerHTML=comm&&branded?`By posting, you agree to TikTok's ${bc} and ${music}.`:`By posting, you agree to TikTok's ${music}.`;
+  $('#apPost').disabled=!$('#apPriv').value||(comm&&!brand&&!branded);
+}
+async function submitApproval(id,tiktok){
+  const body={title:$('#apTitle').value,consent:true,when:$('#apWhen')?$('#apWhen').value:'slot'};
+  if(tiktok)Object.assign(body,{privacy_level:$('#apPriv').value,allow_comment:$('#apCom').checked,allow_duet:$('#apDuet').checked,
+    allow_stitch:$('#apStitch').checked,commercial:$('#apComm').checked,brand_organic:$('#apBrand').checked,brand_content:$('#apBranded').checked});
+  try{await api(`/api/jobs/${id}/approve`,{method:'POST',body:JSON.stringify(body)});closeModal();toast('Approved');loadQueue()}
+  catch(e){$('#apErr').textContent=e.message}
+}
+async function toggleStop(){
+  const on=!stopped;
+  if(on&&!confirm('Stop ALL publishing immediately? Uploads already in progress finish; nothing new starts until you resume.'))return;
+  await api('/api/publishing/emergency-stop',{method:'POST',body:JSON.stringify({on})});toast(on?'Publishing stopped':'Publishing resumed');loadStatus()
+}
+
+async function loadAccounts(){
+  accCache=await api('/api/accounts');const sts=status.streamers.map(s=>s.login);
+  $('#accCards').innerHTML=accCache.map(a=>{const pt=Array.isArray(a.posting_times)?a.posting_times.join(', '):(a.posting_times||'');
+    const exp=a.refresh_expires_at||a.token_expires_at;
+    return `<div class="card acc">
+    <div class="row">${a.avatar_url?`<img class="av" src="${esc(a.avatar_url)}">`:'<div class="av"></div>'}
+      <div><b>${esc(a.display_name||a.username||a.external_id)}</b><div class="muted small">${a.username?'@'+esc(a.username)+' · ':''}${a.platform} via ${a.provider}</div></div><span class="sp"></span>
+      <span class="pill ${a.status==='connected'?'ok':'bad'}">${a.status}</span></div>
+    ${a.status_message?`<div class="muted small">${esc(a.status_message)}</div>`:''}
+    ${a.provider==='youtube'||a.provider==='tiktok'?`<div class="muted small">${a.refresh_expires_at?'Authorization valid until '+fmtT(a.refresh_expires_at):'Authorization renews automatically'}${a.provider==='tiktok'?' · every post needs your approval (TikTok rule)':''}</div>`:''}
+    <div class="kv">
+      <label>Auto-publish</label><input type="checkbox" data-a="${a.id}" data-f="auto_publish" ${a.auto_publish?'checked':''}>
+      <label>Dry run (no real upload)</label><input type="checkbox" data-a="${a.id}" data-f="dry_run" ${a.dry_run?'checked':''}>
+      <label>Max uploads per day</label><input type="number" min="0" data-a="${a.id}" data-f="daily_limit" value="${a.daily_limit}">
+      <label>Min. minutes between uploads</label><input type="number" min="0" data-a="${a.id}" data-f="min_interval_min" value="${a.min_interval_min}">
+      <label>Posting times</label><input data-a="${a.id}" data-f="posting_times" value="${esc(pt)}" placeholder="12:30, 18:00 · or auto · or immediate">
+      <label>Minimum score</label><input type="number" min="0" max="100" data-a="${a.id}" data-f="min_score" value="${a.min_score??''}" placeholder="default">
+      <label>Editing style</label><select data-a="${a.id}" data-f="style">${['auto',...Object.keys(styles)].map(s=>`<option ${a.style===s?'selected':''}>${s}</option>`).join('')}</select>
+      ${a.platform==='youtube'?`<label>YouTube visibility</label><select data-a="${a.id}" data-f="privacy">${['','public','unlisted','private'].map(p=>`<option value="${p}" ${a.privacy===p?'selected':''}>${p||'default'}</option>`).join('')}</select>`:''}
+      <label>AI / altered content disclosure</label><input type="checkbox" data-a="${a.id}" data-f="ai_disclosure" ${a.ai_disclosure?'checked':''}>
+      <label>Streamers</label><div>${sts.map(s=>`<label class="chk small"><input type="checkbox" class="accSt" data-a="${a.id}" value="${s}" ${!a.streamers||a.streamers.includes(s)?'checked':''}>${esc(s)}</label>`).join('')||'<span class="muted small">add streamers first</span>'}</div>
+    </div>
+    <div class="row"><span class="muted small">${a.jobs_today} uploads in the last 24 h</span><span class="sp"></span><button class="b" onclick="verifyAcc(${a.id})">Check</button><button class="b r" onclick="disconnectAcc(${a.id})">Disconnect</button></div></div>`}).join('')
+    ||'<div class="card muted">No accounts connected yet. Use the buttons above (credentials first in Setup).</div>';
+  document.querySelectorAll('#accCards [data-f]').forEach(el=>el.onchange=()=>saveAcc(el));
+  document.querySelectorAll('#accCards .accSt').forEach(el=>el.onchange=()=>{const id=el.dataset.a;
+    const sel=[...document.querySelectorAll(`#accCards .accSt[data-a="${id}"]:checked`)].map(x=>x.value);
+    api('/api/accounts/'+id,{method:'PATCH',body:JSON.stringify({streamers:sel})}).then(()=>toast('Saved'),e=>toast(e.message))});
+}
+async function saveAcc(el){
+  let v;const f=el.dataset.f;
+  if(el.type==='checkbox')v=el.checked;else if(el.type==='number')v=el.value===''?null:Number(el.value);
+  else if(f==='posting_times'){const t=el.value.trim();v=(t==='auto'||t==='immediate')?t:t.split(',').map(x=>x.trim()).filter(Boolean)}
+  else v=el.value;
+  if(f==='auto_publish'&&v&&!confirm('Turn on automatic publishing for this account? Clips that meet its rules will be uploaded without asking (unless dry run is on).')){el.checked=false;return}
+  try{await api('/api/accounts/'+el.dataset.a,{method:'PATCH',body:JSON.stringify({[f]:v})});toast('Saved')}catch(e){toast(e.message)}
+}
+async function verifyAcc(id){try{const r=await api(`/api/accounts/${id}/verify`,{method:'POST'});toast(r.status==='connected'?'Account OK':(r.status_message||'Problem'));loadAccounts()}catch(e){toast(e.message)}}
+async function disconnectAcc(id){if(!confirm('Disconnect this account? Its tokens are deleted (and revoked where possible) and queued posts are cancelled.'))return;
+  await api('/api/accounts/'+id,{method:'DELETE'});toast('Disconnected');loadAccounts()}
+async function importAcc(p){try{const r=await api('/api/accounts/import/'+p,{method:'POST'});toast(`Imported ${r.imported} channel(s)`);loadAccounts()}catch(e){toast(e.message)}}
+function igDialog(){openModal(`<h3>Add Instagram (professional account)</h3><div class="kv"><label>Instagram user id</label><input id="igId"><label>Long-lived access token</label><input id="igTok" type="password"></div>
+  <p class="muted small">Needs the instagram_business_content_publish permission and PUBLIC_BASE_URL over https. The token is stored encrypted.</p>
+  <div class="row"><span class="sp"></span><button class="b" onclick="closeModal()">Cancel</button><button class="b p" onclick="igSave()">Connect</button></div>`)}
+async function igSave(){try{await api('/api/accounts/import/instagram',{method:'POST',body:JSON.stringify({user_id:$('#igId').value,token:$('#igTok').value})});closeModal();toast('Instagram connected');loadAccounts()}catch(e){toast(e.message)}}
+
+async function loadAnalytics(){
+  const d=await api('/api/analytics');const t=d.totals,n=v=>v==null?'<span class="muted">n/a</span>':Number(v).toLocaleString();
+  $('#anTotals').innerHTML=[['Posts with data',t.posts_with_metrics],['Views',t.views],['Likes',t.likes],['Watch time (min)',t.watch_time_min],['Subscribers gained',t.subs_gained]]
+    .map(([k,v])=>`<div class="card"><h3>${k}</h3><div class="big" style="font-size:20px">${n(v)}</div></div>`).join('');
+  const grp=(title,g)=>{const e=Object.entries(g).sort((a,b)=>b[1].rel-a[1].rel);
+    return `<div class="card"><h3>${title}</h3>${e.length?e.map(([k,v])=>`<div class="row small"><span style="width:110px">${esc(k)}</span><div class="bar sp"><i style="width:${Math.min(100,v.rel*50)}%"></i></div><span>${v.rel.toFixed(2)}× · ${v.n}</span></div>`).join(''):'<p class="muted small">Not enough published posts with metrics yet.</p>'}</div>`};
+  $('#anGroups').innerHTML=grp('By streamer (views vs account median)',d.by_streamer)+grp('By editing style',d.by_style)+grp('By chat reaction',d.by_reaction)+grp('By posting hour',d.by_hour);
+  $('#anPosts').innerHTML=d.posts.map(p=>`<tr><td>${p.url?`<a href="${esc(p.url)}" target="_blank" style="color:var(--blue)">${esc(p.title)}</a>`:esc(p.title)}<div class="muted small">${esc(p.streamer)} · ${esc(p.style||'')} · ${Math.round(p.age_hours||0)} h old</div></td>
+    <td class="small">${esc(p.display_name)}<div class="muted">${p.platform}</div></td><td>${n(p.views)}</td><td>${n(p.likes)}</td><td>${n(p.comments)}</td><td>${n(p.shares)}</td><td>${p.avg_view_pct!=null?p.avg_view_pct.toFixed(0)+'%':'<span class="muted">n/a</span>'}</td></tr>`).join('')
+    ||'<tr><td colspan="7" class="muted">No published posts with metrics yet.</td></tr>';
+}
+async function refreshAnalytics(){try{const r=await api('/api/analytics/refresh',{method:'POST'});toast(`Fetched ${r.stored} metric snapshots`);loadAnalytics()}catch(e){toast(e.message)}}
+
+async function loadSetup(){
+  const s=await api('/api/setup');const sec=s.secrets,has=k=>!!sec[k];
+  const acc=p=>s.accounts.filter(a=>a.provider===p&&a.status==='connected').length;
+  const step=(ok,n,title,body)=>`<div class="step ${ok?'ok':''}" style="margin:14px 0"><div class="n">${ok?'✓':n}</div><div class="sp"><b>${title}</b><div class="small muted" style="margin-top:4px">${body}</div></div></div>`;
+  const inp=(k,label,pw)=>`<div class="kv" style="margin-top:6px"><label>${label} ${has(k)?`<span class="pill ok">${sec[k]}</span>`:''}</label><input id="sec-${k}" ${pw?'type="password"':''} placeholder="${has(k)?'saved - leave empty to keep':''}"></div>`;
+  $('#setupBody').innerHTML=`<h3>Setup wizard</h3><p class="small muted">Everything here works from your phone. Secrets are stored encrypted (${esc(s.encryption)}); values in the server's .env always win.</p>`+
+  step(s.https,1,'Public HTTPS address',s.https?`Server reachable at <code>${esc(s.public_base_url)}</code>.`:
+    'Put the server behind HTTPS (for example Caddy) and set <code>PUBLIC_BASE_URL=https://your-domain</code> in .env. OAuth logins (YouTube/TikTok) and Buffer/Instagram need it.')+
+  step(s.worker_alive,2,'Publishing worker',s.worker_alive?'The background worker is running.':'The worker container is not running. Start it with <code>docker compose up -d</code>.')+
+  step(s.streamers_with_rights>0,3,'Streamers and permissions',`${s.streamers_with_rights} streamer(s) marked "publishing rights granted". Auto-publishing only uses those (Streamers tab).`)+
+  step(acc('youtube')>0,4,'YouTube Shorts (official API)',`1. In <a href="https://console.cloud.google.com/" target="_blank" style="color:var(--blue)">Google Cloud Console</a> create a project and enable <b>YouTube Data API v3</b> and <b>YouTube Analytics API</b>.<br>
+    2. OAuth consent screen: External, add the scopes youtube.upload, youtube.readonly, yt-analytics.readonly, then <b>Publish app</b> (in "Testing" Google expires the login after 7 days).<br>
+    3. Credentials → OAuth client ID → Web application, authorized redirect URI: <code>${esc(s.redirect_uris.youtube)}</code><br>
+    4. Paste the client ID and secret, save, then connect.${inp('YT_CLIENT_ID','Client ID')}${inp('YT_CLIENT_SECRET','Client secret',1)}
+    <div class="row" style="margin-top:8px"><button class="b" onclick="saveSecrets(['YT_CLIENT_ID','YT_CLIENT_SECRET'])">Save</button><a class="b p" href="/oauth/youtube/start" style="text-decoration:none">Connect YouTube</a> <span>${acc('youtube')} connected</span></div>
+    <p>Each upload uses the API project's upload quota (default 100 per day). New channels may need phone verification to upload Shorts.</p>`)+
+  step(acc('buffer')>0,5,'TikTok, fully automatic: Buffer (free plan, recommended)',`Buffer is an authorized TikTok publishing partner and its free plan includes the API (3 channels).<br>
+    1. Create a free account at buffer.com and connect your TikTok (TikTok Business account), and optionally YouTube/Instagram.<br>
+    2. Create an API key at <a href="https://publish.buffer.com/settings/api" target="_blank" style="color:var(--blue)">publish.buffer.com/settings/api</a>, paste it here and import the channels.${inp('BUFFER_API_KEY','Buffer API key',1)}
+    <div class="row" style="margin-top:8px"><button class="b" onclick="saveSecrets(['BUFFER_API_KEY'])">Save</button><button class="b p" onclick="importAcc('buffer').then(loadSetup)">Import channels</button> <span>${acc('buffer')} connected</span></div>
+    <p>Buffer downloads the video from this server, so step 1 (HTTPS) is required.</p>`)+
+  step(acc('tiktok')>0,6,'TikTok, official API (needs one tap per post)',`TikTok's rules require you to review every Direct Post (privacy, interactions, disclosure, consent) - AutoClipper shows that screen in the Queue. Unaudited apps can only post privately (max 5 users/day); public posting needs TikTok's app audit.<br>
+    1. At <a href="https://developers.tiktok.com/" target="_blank" style="color:var(--blue)">developers.tiktok.com</a> create an app, add <b>Login Kit</b> and <b>Content Posting API</b> (Direct Post), scopes user.info.basic, video.publish, video.list.<br>
+    2. Redirect URI: <code>${esc(s.redirect_uris.tiktok)}</code> (verify your domain if asked).${inp('TIKTOK_CLIENT_KEY','Client key')}${inp('TIKTOK_CLIENT_SECRET','Client secret',1)}
+    <div class="row" style="margin-top:8px"><button class="b" onclick="saveSecrets(['TIKTOK_CLIENT_KEY','TIKTOK_CLIENT_SECRET'])">Save</button><a class="b p" href="/oauth/tiktok/start" style="text-decoration:none">Connect TikTok</a> <span>${acc('tiktok')} connected</span></div>`)+
+  step(acc('uploadpost')>0,7,'Optional: Upload-Post (paid, from $16/month)','Alternative API publisher; TikTok requires a paid plan. Only add a key if you subscribed yourself.'+inp('UPLOADPOST_API_KEY','Upload-Post API key',1)+
+    `<div class="row" style="margin-top:8px"><button class="b" onclick="saveSecrets(['UPLOADPOST_API_KEY'])">Save</button><button class="b" onclick="importAcc('uploadpost').then(loadSetup)">Import profiles</button></div>`)+
+  step(s.telegram,8,'Telegram notifications (optional)',`Create a bot with @BotFather, send it a message, then get your chat id (for example from https://api.telegram.org/bot&lt;token&gt;/getUpdates).${inp('TELEGRAM_BOT_TOKEN','Bot token',1)}${inp('TELEGRAM_CHAT_ID','Chat id')}
+    <div class="row" style="margin-top:8px"><button class="b" onclick="saveSecrets(['TELEGRAM_BOT_TOKEN','TELEGRAM_CHAT_ID'])">Save</button><button class="b" onclick="tgTest()">Send test message</button></div>`)+
+  step(false,9,'Dry-run test',`Queues the newest clip for every connected account. The worker then does everything except the upload (renders the style, checks quality, checks the login) and shows the result in Queue.
+    <div class="row" style="margin-top:8px"><button class="b" onclick="dryTest()">Run dry-run test</button></div>`)+
+  step(!s.dry_run,10,'Go live',s.dry_run?`Global dry run is <b>on</b>: nothing is uploaded. When the dry-run test looks right, turn it off (each account also has its own dry-run switch).
+    <div class="row" style="margin-top:8px"><button class="b p" onclick="goLive()">Turn off global dry run</button></div>`:`Live. Use <b>■ STOP</b> in the header to halt all publishing instantly.`)+
+  `<div class="step" style="margin:14px 0"><div class="n">i</div><div class="sp"><b>CapCut</b><div class="small muted" style="margin-top:4px">Not connectable. ${esc(s.capcut.reason)}</div></div></div>`;
+}
+async function saveSecrets(keys){const body={};keys.forEach(k=>{const v=$('#sec-'+k).value.trim();if(v)body[k]=v});
+  if(!Object.keys(body).length){toast('Nothing to save');return}
+  try{await api('/api/setup/secrets',{method:'PUT',body:JSON.stringify(body)});toast('Saved (encrypted)');loadSetup()}catch(e){toast(e.message)}}
+async function tgTest(){try{await api('/api/setup/telegram-test',{method:'POST'});toast('Test message sent')}catch(e){toast(e.message)}}
+async function dryTest(){try{const r=await api('/api/setup/dry-run-test',{method:'POST'});toast(`Clip ${r.clip_id}: `+r.results.map(x=>x.skipped?'skipped ('+x.skipped+')':'queued').join(', ')+' - see Queue')}catch(e){toast(e.message)}}
+async function goLive(){if(!confirm('Turn off dry run? Accounts with auto-publish ON and their own dry run OFF will start uploading for real.'))return;
+  await api('/api/settings',{method:'PUT',body:JSON.stringify({publishing:{dry_run:false}})});toast('Dry run off');loadSetup();loadStatus()}
 
 async function loadMoments(){
   const rows=await api('/api/moments?limit=200');
@@ -302,10 +561,15 @@ async function runCleanup(){const r=await api('/api/storage/cleanup',{method:'PO
 async function refresh(){
   try{await loadStatus();
     if(tab==='live')await renderLive();else if(tab==='clips')await loadClips();else if(tab==='moments')await loadMoments();
-    else if(tab==='streamers')await loadStreamers();else if(tab==='settings'){if(!settings)await loadSettings()}else if(tab==='system')await loadSystem();
+    else if(tab==='streamers')await loadStreamers();else if(tab==='queue')await loadQueue();
+    else if(tab==='accounts')await loadAccounts();else if(tab==='analytics')await loadAnalytics();else if(tab==='setup')await loadSetup();else if(tab==='settings'){if(!settings)await loadSettings()}else if(tab==='system')await loadSystem();
   }catch(e){toast(e.message)}
 }
-refresh();setInterval(()=>{if(tab==='live'||tab==='system')refresh();else loadStatus()},5000);
+if(location.hash.startsWith('#accounts')){const q=new URLSearchParams(location.hash.split('?')[1]||'');
+  document.querySelector('#nav button[data-t=accounts]').click();
+  if(q.get('error'))setTimeout(()=>toast('Connect failed: '+q.get('error')),300);if(q.get('connected'))setTimeout(()=>toast('Connected '+q.get('connected')),300);
+  history.replaceState(null,'','/')}
+refresh();setInterval(()=>{if(!$('#modal').classList.contains('hidden'))return;if(tab==='live'||tab==='system'||tab==='queue')refresh();else loadStatus()},5000);
 </script>
 </body>
 </html>

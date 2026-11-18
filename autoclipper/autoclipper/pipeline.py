@@ -5,13 +5,14 @@ import logging
 import secrets
 import shutil
 import time
+from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
 
 from . import cut as cutmod
-from . import metadata, render, scoring, signals, subtitles
+from . import editor, metadata, render, scoring, signals, subtitles
 from .layout import plan_layout
 from .transcribe import Transcriber, Word
 
@@ -119,7 +120,8 @@ class ClipPipeline:
         # --- cut --------------------------------------------------------------
         plan = cutmod.plan_cut(dur, ev0, ev1, peak_hint, chat, audio_db, motion_s, tr.words, tr.segments,
                                ccfg["min_sec"], ccfg["max_sec"], ccfg["remove_silence"],
-                               ccfg["min_silence_sec"], ccfg["keep_silence_sec"])
+                               ccfg["min_silence_sec"], ccfg["keep_silence_sec"],
+                               scene_cuts=cutmod.scene_cuts(motion, signals.VIDEO_FPS))
         keep = plan.keep
         out_dur = plan.duration
         peak_out = cutmod.map_time(plan.peak, keep) or 0.0
@@ -181,22 +183,21 @@ class ClipPipeline:
             credit_template=cfg.get("publishing.credit_template"), layout_kind=layout.kind,
             llm_base_url=cfg.get("metadata.llm_base_url"), llm_model=cfg.get("metadata.llm_model"))
 
-        place = subtitles.choose_placement(rc["width"], rc["height"], layout.kind, layout.face_out,
-                                           layout.game_out, layout.top_h, sc)
-        ass = subtitles.build_ass(clip_words, keep, imp_clip, place, sc, rc["width"], rc["height"],
-                                  hook_text=md["hook"] if rc.get("burn_hook") else None,
-                                  hook_sec=rc.get("hook_sec", 2.5))
-        ass_path = work / "subs.ass"
-        ass_path.write_text(ass, encoding="utf-8")
-
-        # --- render -------------------------------------------------------------
+        # --- master + default render ------------------------------------------
         day = time.strftime("%Y-%m-%d", time.gmtime())
         out_dir = cfg.clips_dir / day
         out_dir.mkdir(parents=True, exist_ok=True)
         stem = f"{streamer}_{int(m['peak_t'])}_m{m['id']}"
+        master_dir = cfg.clips_dir / "masters" / f"m{m['id']}"
+        editor.save_master(master_dir, src, {
+            "keep": keep, "start": plan.start, "end": plan.end, "peak_out": peak_out,
+            "words": [asdict(x) for x in clip_words], "important": sorted(imp_clip),
+            "layout": editor.layout_to_dict(layout), "hook": md["hook"], "top_cat": top_cat,
+            "score": score, "streamer": streamer,
+        })
+        default_style = cfg.get("render.default_style") or "clean"
         out = out_dir / f"{stem}.mp4"
-        render.render_clip(src, keep, layout, ass_path, out, rc, work, fonts_dir="/usr/share/fonts")
-        render.correct_loudness(out, float(rc["loudness_lufs"]))
+        editor.render_style(cfg, master_dir, default_style, out, work)
         thumb = out_dir / f"{stem}.jpg"
         render.make_thumbnail(out, peak_out, thumb)
         real_dur = render.probe_duration(out)
@@ -213,8 +214,11 @@ class ClipPipeline:
             "transcript": " ".join(x.text for x in clip_words), "language": tr.language,
             "layout": layout.kind, "src_start": src_start, "src_end": src_end, "peak_t": m["peak_t"],
             "stream_offset": offset, "status": status, "public_token": secrets.token_urlsafe(24),
-            "created_at": time.time(),
+            "created_at": time.time(), "master_dir": str(master_dir), "top_cat": top_cat,
+            "category": sess.get("category") if sess else None, "quote": md.get("quote"),
         })
+        db.execute("INSERT OR REPLACE INTO clip_variants (clip_id, style, path, created_at) VALUES (?,?,?,?)",
+                   (clip_id, editor.style_for(cfg, default_style)[0], str(out), time.time()))
         log.info("clip %s: %s score=%.1f %s (%s, %.1fs)", clip_id, streamer, score, comps, layout.kind, real_dur)
         self.mgr.after_clip(clip_id)
         return clip_id

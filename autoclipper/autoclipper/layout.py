@@ -101,7 +101,7 @@ class FaceDetector:
             _, faces = self.yunet.detect(img)
             if faces is None:
                 return []
-            return [(Box(*f[:4]), float(f[-1])) for f in faces]
+            return [(Box(*map(float, f[:4])), float(f[-1])) for f in faces]
         if self.haar is None:
             return []
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
