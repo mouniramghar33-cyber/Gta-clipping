@@ -225,6 +225,9 @@ class Manager:
                     st.offline_checks = 0
                     st.meta = meta
                     if not st.live:
+                        if not await self._capacity_for(st):
+                            st.last_error = "live, not recorded: server capacity reached (resources.max_concurrent_recordings)"
+                            return
                         await self._go_live(st, ch)
                     else:
                         self._update_live_meta(st)
@@ -270,6 +273,26 @@ class Manager:
         for st in live:
             st.collab = sorted(sid for sid in mentions(st.meta.get("title") or "", self.names, st.login)
                                if sid in self.states and self.states[sid].live) if st.meta.get("title") else []
+
+    def _priority(self, st: StreamerState) -> float:
+        row = self.db.one("SELECT weight FROM streamers WHERE login=?", (st.login,)) or {}
+        gta = 10.0 if (self.cfg.get("gta6.enabled") and is_gta(st.meta.get("category"), st.meta.get("title"))) else 0.0
+        return gta + float(row.get("weight") or 1.0)
+
+    async def _capacity_for(self, st: StreamerState) -> bool:
+        """With max_concurrent_recordings set, record the most valuable streams only: GTA VI first,
+        then streamers whose clips perform best. A more valuable stream replaces the weakest one."""
+        cap = int(self.cfg.get("resources.max_concurrent_recordings") or 0)
+        live = [s for s in self.states.values() if s.live]
+        if cap <= 0 or len(live) < cap:
+            return True
+        weakest = min(live, key=self._priority)
+        if self._priority(st) > self._priority(weakest) + 0.5:
+            log.info("capacity: %s replaces %s (higher priority)", st.login, weakest.login)
+            await self._go_offline(weakest)
+            weakest.last_error = f"paused for {st.login} (server capacity)"
+            return True
+        return False
 
     def _quality_for(self, st: StreamerState) -> str:
         """Resource allocation: when the server is busy, the weakest performers record at 720p."""

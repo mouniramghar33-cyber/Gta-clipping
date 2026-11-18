@@ -181,3 +181,35 @@ def test_gta_sensitivity_lowers_the_bar(tmp_path):
     normal = _run(cfg, True, flat, zero, lambda s: 5.0, 500, 1.0, rate)
     gta = _run(cfg, True, flat, zero, lambda s: 5.0, 500, 0.75, rate)
     assert len(gta) >= len(normal) and len(gta) >= 1
+
+
+def test_capacity_prefers_gta_and_best_performers(tmp_path):
+    import asyncio
+    from autoclipper.manager import Manager
+    cfg = Config(tmp_path)
+    cfg.update({"resources": {"max_concurrent_recordings": 2}})
+    db = DB(cfg.db_path)
+    watchlist.sync(db)
+    db.execute("UPDATE streamers SET weight=2.0 WHERE login='kaicenat'")  # clearly better (hysteresis 0.5)
+    m = Manager(cfg, db)
+    stopped = []
+
+    async def fake_offline(st):
+        st.live = False
+        stopped.append(st.login)
+    m._go_offline = fake_offline
+    for sid, cat in (("lacy", "Just Chatting"), ("jynxzi", "Just Chatting")):
+        st = m.state(sid)
+        st.live, st.meta = True, {"category": cat}
+    new = m.state("kaicenat")
+    new.meta = {"category": "Just Chatting"}
+    assert asyncio.run(m._capacity_for(new)) is True and stopped        # better performer replaces weakest
+    gta = m.state("tota")
+    gta.meta = {"category": "Grand Theft Auto VI"}
+    m.state(stopped[0]).live = False
+    assert asyncio.run(m._capacity_for(gta)) is True                    # GTA VI always gets a slot
+    other = m.state("marlon")
+    other.meta = {"category": "Just Chatting"}
+    for s in ("kaicenat", "tota"):
+        m.state(s).live = True
+    assert asyncio.run(m._capacity_for(other)) is False                 # weaker stream waits

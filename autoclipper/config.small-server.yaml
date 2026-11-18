@@ -1,0 +1,13 @@
+# Profile for small servers, e.g. Oracle Cloud Always Free (2 ARM cores / 12 GB RAM).
+# Copy to data/config.yaml. Everything can still be changed later in the dashboard.
+resources:
+  max_concurrent_recordings: 2     # GTA VI streams first, then your best-performing streamers
+  vision_every_n_segments: 2       # face/expression every 4 s instead of every 2 s
+recording:
+  quality: "720p60,720p,best"      # smaller files, cheaper to edit
+whisper:
+  model: base                      # ~2x faster than "small", slightly less accurate
+render:
+  fps: 30
+  workers: 1
+  preset: veryfast

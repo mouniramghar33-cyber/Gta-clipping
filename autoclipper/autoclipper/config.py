@@ -49,6 +49,9 @@ DEFAULTS: dict[str, Any] = {
         "vision_every_n_segments": 1,
         "low_tier_quality": "720p60,720p,best",  # recording quality for the weakest performers when busy
         "busy_cpu_percent": 85,
+        # Small servers (e.g. Oracle Always Free: 2 ARM cores) can't record 11 streams at once.
+        # 0 = no limit. Otherwise only this many are recorded: GTA VI first, then best performers.
+        "max_concurrent_recordings": 0,
     },
     "detection": {
         "min_messages": 8,          # ignore windows with fewer messages
