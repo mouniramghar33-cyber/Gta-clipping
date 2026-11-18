@@ -30,11 +30,11 @@ main{padding:20px;max-width:1400px;margin:0 auto}
 .sp{flex:1}
 .muted{color:var(--muted)}
 canvas{width:100%;height:150px;display:block}
-button.b{background:var(--panel2);border:1px solid var(--line);color:var(--text);padding:7px 12px;border-radius:9px;cursor:pointer;font:inherit}
-button.b:hover{border-color:#3a4258}
-button.p{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
-button.g{background:rgba(53,208,127,.15);border-color:rgba(53,208,127,.4);color:var(--good)}
-button.r{background:rgba(255,90,90,.12);border-color:rgba(255,90,90,.35);color:var(--bad)}
+.b{background:var(--panel2);border:1px solid var(--line);color:var(--text);padding:7px 12px;border-radius:9px;cursor:pointer;font:inherit}
+.b:hover{border-color:#3a4258}
+.p{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+.g{background:rgba(53,208,127,.15);border-color:rgba(53,208,127,.4);color:var(--good)}
+.r{background:rgba(255,90,90,.12);border-color:rgba(255,90,90,.35);color:var(--bad)}
 input,select,textarea{background:var(--bg);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:7px 9px;font:inherit}
 .clips{grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}
 .clip video{width:100%;aspect-ratio:9/16;max-height:520px;background:#000;border-radius:10px;object-fit:contain}
@@ -56,6 +56,7 @@ pre{white-space:pre-wrap;font-size:12px;color:var(--muted);max-height:520px;over
 .toast{position:fixed;right:16px;bottom:16px;background:var(--panel2);border:1px solid var(--line);padding:10px 14px;border-radius:10px;z-index:9}
 .legend{display:flex;gap:12px;font-size:12px;color:var(--muted)}
 .legend i{display:inline-block;width:10px;height:3px;margin-right:5px;vertical-align:middle}
+.modalbg.hidden{display:none}
 .modalbg{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:20;display:flex;align-items:flex-start;justify-content:center;overflow:auto;padding:24px 12px}
 .modal{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px;width:100%;max-width:560px}
 .modal video{width:100%;max-height:420px;background:#000;border-radius:10px}
@@ -68,7 +69,9 @@ code{background:var(--bg);padding:2px 6px;border-radius:6px;font-size:12px;word-
 label.chk{display:flex;gap:8px;align-items:center;margin:4px 0}
 .full{width:100%}
 table{display:block;overflow-x:auto}
-@media (max-width:600px){main{padding:12px}.g2{grid-template-columns:1fr}.kv{grid-template-columns:1fr}}
+a.b{text-decoration:none;display:inline-block}
+.b:disabled{opacity:.45;cursor:not-allowed}
+@media (max-width:600px){nav{flex-wrap:nowrap;overflow-x:auto;width:100%;-webkit-overflow-scrolling:touch}nav button{white-space:nowrap}header{gap:8px}main{padding:12px}.g2{grid-template-columns:1fr}.kv{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -150,8 +153,8 @@ table{display:block;overflow-x:auto}
     <div class="card sec">
       <h3>Connect</h3>
       <div class="row">
-        <a class="b p" href="/oauth/youtube/start" style="text-decoration:none">Connect YouTube</a>
-        <a class="b p" href="/oauth/tiktok/start" style="text-decoration:none">Connect TikTok</a>
+        <button class="b p" onclick="connectOAuth('youtube')">Connect YouTube</button>
+        <button class="b p" onclick="connectOAuth('tiktok')">Connect TikTok</button>
         <button class="b" onclick="importAcc('buffer')">Import Buffer channels</button>
         <button class="b" onclick="importAcc('uploadpost')">Import Upload-Post profiles</button>
         <button class="b" onclick="igDialog()">Add Instagram</button>
@@ -464,7 +467,7 @@ async function loadSetup(){
     2. OAuth consent screen: External, add the scopes youtube.upload, youtube.readonly, yt-analytics.readonly, then <b>Publish app</b> (in "Testing" Google expires the login after 7 days).<br>
     3. Credentials → OAuth client ID → Web application, authorized redirect URI: <code>${esc(s.redirect_uris.youtube)}</code><br>
     4. Paste the client ID and secret, save, then connect.${inp('YT_CLIENT_ID','Client ID')}${inp('YT_CLIENT_SECRET','Client secret',1)}
-    <div class="row" style="margin-top:8px"><button class="b" onclick="saveSecrets(['YT_CLIENT_ID','YT_CLIENT_SECRET'])">Save</button><a class="b p" href="/oauth/youtube/start" style="text-decoration:none">Connect YouTube</a> <span>${acc('youtube')} connected</span></div>
+    <div class="row" style="margin-top:8px"><button class="b" onclick="saveSecrets(['YT_CLIENT_ID','YT_CLIENT_SECRET'])">Save</button><button class="b p" onclick="connectOAuth('youtube')">Connect YouTube</button> <span>${acc('youtube')} connected</span></div>
     <p>Each upload uses the API project's upload quota (default 100 per day). New channels may need phone verification to upload Shorts.</p>`)+
   step(acc('buffer')>0,5,'TikTok, fully automatic: Buffer (free plan, recommended)',`Buffer is an authorized TikTok publishing partner and its free plan includes the API (3 channels).<br>
     1. Create a free account at buffer.com and connect your TikTok (TikTok Business account), and optionally YouTube/Instagram.<br>
@@ -474,7 +477,7 @@ async function loadSetup(){
   step(acc('tiktok')>0,6,'TikTok, official API (needs one tap per post)',`TikTok's rules require you to review every Direct Post (privacy, interactions, disclosure, consent) - AutoClipper shows that screen in the Queue. Unaudited apps can only post privately (max 5 users/day); public posting needs TikTok's app audit.<br>
     1. At <a href="https://developers.tiktok.com/" target="_blank" style="color:var(--blue)">developers.tiktok.com</a> create an app, add <b>Login Kit</b> and <b>Content Posting API</b> (Direct Post), scopes user.info.basic, video.publish, video.list.<br>
     2. Redirect URI: <code>${esc(s.redirect_uris.tiktok)}</code> (verify your domain if asked).${inp('TIKTOK_CLIENT_KEY','Client key')}${inp('TIKTOK_CLIENT_SECRET','Client secret',1)}
-    <div class="row" style="margin-top:8px"><button class="b" onclick="saveSecrets(['TIKTOK_CLIENT_KEY','TIKTOK_CLIENT_SECRET'])">Save</button><a class="b p" href="/oauth/tiktok/start" style="text-decoration:none">Connect TikTok</a> <span>${acc('tiktok')} connected</span></div>`)+
+    <div class="row" style="margin-top:8px"><button class="b" onclick="saveSecrets(['TIKTOK_CLIENT_KEY','TIKTOK_CLIENT_SECRET'])">Save</button><button class="b p" onclick="connectOAuth('tiktok')">Connect TikTok</button> <span>${acc('tiktok')} connected</span></div>`)+
   step(acc('uploadpost')>0,7,'Optional: Upload-Post (paid, from $16/month)','Alternative API publisher; TikTok requires a paid plan. Only add a key if you subscribed yourself.'+inp('UPLOADPOST_API_KEY','Upload-Post API key',1)+
     `<div class="row" style="margin-top:8px"><button class="b" onclick="saveSecrets(['UPLOADPOST_API_KEY'])">Save</button><button class="b" onclick="importAcc('uploadpost').then(loadSetup)">Import profiles</button></div>`)+
   step(s.telegram,8,'Telegram notifications (optional)',`Create a bot with @BotFather, send it a message, then get your chat id (for example from https://api.telegram.org/bot&lt;token&gt;/getUpdates).${inp('TELEGRAM_BOT_TOKEN','Bot token',1)}${inp('TELEGRAM_CHAT_ID','Chat id')}
@@ -484,6 +487,12 @@ async function loadSetup(){
   step(!s.dry_run,10,'Go live',s.dry_run?`Global dry run is <b>on</b>: nothing is uploaded. When the dry-run test looks right, turn it off (each account also has its own dry-run switch).
     <div class="row" style="margin-top:8px"><button class="b p" onclick="goLive()">Turn off global dry run</button></div>`:`Live. Use <b>■ STOP</b> in the header to halt all publishing instantly.`)+
   `<div class="step" style="margin:14px 0"><div class="n">i</div><div class="sp"><b>CapCut</b><div class="small muted" style="margin-top:4px">Not connectable. ${esc(s.capcut.reason)}</div></div></div>`;
+}
+async function connectOAuth(p){
+  const s=await api('/api/setup');
+  if(!s.providers[p].configured){toast(s.providers[p].hint+' (Setup tab)');return}
+  if(!s.https){toast('Set PUBLIC_BASE_URL to your https address first (Setup step 1)');return}
+  location.href='/oauth/'+p+'/start';
 }
 async function saveSecrets(keys){const body={};keys.forEach(k=>{const v=$('#sec-'+k).value.trim();if(v)body[k]=v});
   if(!Object.keys(body).length){toast('Nothing to save');return}
