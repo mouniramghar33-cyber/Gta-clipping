@@ -56,6 +56,7 @@ class Manager:
         self.tokens = TokenStore(cfg.data_dir / "secrets" / "tokens.json")
         self.publishers = all_publishers(self.tokens)
         self.started_at = time.time()
+        psutil.cpu_percent(interval=None)  # prime the counter so the first reading isn't 0
         self.data_size = 0
         from .pipeline import ClipPipeline
         self.pipeline = ClipPipeline(self)
