@@ -64,7 +64,9 @@ def main() -> None:
                 last["verify"] = now
             if cfg.get("analytics.enabled") and now - last["metrics"] > float(cfg.get("analytics.interval_hours")) * 3600:
                 n = analytics.collect(engine)
-                log.info("analytics: stored %d metric snapshots", n)
+                w = analytics.update_streamer_weights(db, cfg) if cfg.get("analytics.learning") else {}
+                log.info("analytics: stored %d metric snapshots; streamer weights %s", n,
+                         {k: v for k, v in w.items() if v != 1.0} or "unchanged (not enough data)")
                 last["metrics"] = now
             if cfg.get("notifications.events.daily_summary") and notifier.daily_summary_due():
                 notifier.send("daily_summary", notifier.daily_summary())

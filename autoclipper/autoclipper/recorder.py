@@ -41,6 +41,8 @@ def stream_url(login: str, platform: str = "twitch") -> str:
     if platform == "kick":
         return f"https://kick.com/{login}"
     if platform == "youtube":
+        if login.startswith("UC") and len(login) == 24:   # verified channel id
+            return f"https://www.youtube.com/channel/{login}/live"
         return f"https://www.youtube.com/@{login}/live"
     raise ValueError(f"unsupported platform {platform}")
 
@@ -60,7 +62,8 @@ def check_live(login: str, platform: str = "twitch", timeout: int = 45) -> dict 
         return None
     md = data.get("metadata") or {}
     return {"title": md.get("title"), "category": md.get("category"), "author": md.get("author"),
-            "qualities": list(data["streams"].keys())}
+            "qualities": list(data["streams"].keys()),
+            "video_id": md.get("id") if platform == "youtube" else None}
 
 
 class SegmentStore:

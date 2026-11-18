@@ -39,6 +39,9 @@ class Window:
     ratio: float
     z: float
     audio_spike_db: float = 0.0
+    expr_spike: float = 0.0      # facial expression intensity above the streamer's normal
+    body_spike: float = 0.0      # body movement above normal (ratio)
+    mode: str = "chat"           # chat | nochat
     triggered: bool = False
 
 
@@ -66,6 +69,9 @@ class Moment:
             "max_hype_share": round(max((w.hype_share for w in self.windows), default=0), 3),
             "max_repetition": round(max((w.repetition for w in self.windows), default=0), 3),
             "max_audio_spike_db": round(max((w.audio_spike_db for w in self.windows), default=0), 1),
+            "max_expr_spike": round(max((w.expr_spike for w in self.windows), default=0), 3),
+            "max_body_spike": round(max((w.body_spike for w in self.windows), default=0), 2),
+            "mode": self.windows[0].mode if self.windows else "chat",
             "categories": dict(cats),
             "windows": len(self.windows),
         }
@@ -122,6 +128,11 @@ class StreamDetector:
         self._last_bin = None
         self.audio = Timeline(max_age=20 * 60)
         self.motion = Timeline(max_age=20 * 60)
+        self.expr = Timeline(max_age=20 * 60)      # 1 - P(neutral face)
+        self.body = Timeline(max_age=20 * 60)      # movement around the face
+        self.emotions = Timeline(max_age=20 * 60)  # dominant emotion code per keyframe
+        self.has_chat = True                       # False when the platform's chat isn't available
+        self.sensitivity = 1.0                     # <1 = easier to trigger (GTA VI priority mode)
         self.active: Moment | None = None
         self.last_final: Moment | None = None
         self.last_window: Window | None = None
@@ -212,8 +223,13 @@ class StreamDetector:
                        base if base is not None else 0.0,
                        n / max(base, 1.0) if base is not None else 0.0,
                        (n - base) / mad if base is not None else 0.0)
-            w.audio_spike_db = self._audio_spike(t0 - float(self.get("chat.reaction_delay_sec")), t1)
-            if base is not None:
+            delay = float(self.get("chat.reaction_delay_sec"))
+            w.audio_spike_db = self._audio_spike(t0 - delay, t1)
+            w.expr_spike, w.body_spike = self._visual_spikes(t0 - delay, t1)
+            if not self.has_chat:
+                w.mode = "nochat"
+                w.triggered = self._is_trigger_nochat(w)
+            elif base is not None:
                 w.triggered = self._is_trigger(w)
             self.last_window = w
             self._track(w, now)
@@ -225,12 +241,35 @@ class StreamDetector:
             return 0.0
         return float(np.percentile(seg, 95) - self.audio.median())
 
+    def _visual_spikes(self, a: float, b: float) -> tuple[float, float]:
+        """Facial expression above the stream's normal level, body movement relative to normal."""
+        ex = self.expr.slice(a, b)
+        bd = self.body.slice(a, b)
+        e = float(ex.max() - self.expr.median()) if len(ex) else 0.0
+        bm = self.body.median()
+        bo = float(bd.max() / bm) if len(bd) and bm > 0 else 0.0
+        return max(0.0, e), bo
+
+    def _is_trigger_nochat(self, w: Window) -> bool:
+        """No chat available (e.g. YouTube without an API key): require at least two strong,
+        independent signals. Loud audio alone never counts."""
+        d = self.get
+        s = self.sensitivity
+        strong = 0
+        if w.audio_spike_db >= float(d("detection.nochat_audio_db")) * s:
+            strong += 1
+        if w.expr_spike >= float(d("detection.nochat_expr")) * s:
+            strong += 1
+        if w.body_spike >= float(d("detection.nochat_body_ratio")) * s:
+            strong += 1
+        return strong >= 2 and w.expr_spike > 0  # the streamer must visibly react
+
     def _is_trigger(self, w: Window) -> bool:
         d = self.get
         if w.messages < int(d("detection.min_messages")):
             return False
-        z_thr = float(d("detection.z_threshold"))
-        r_thr = float(d("detection.ratio_threshold"))
+        z_thr = float(d("detection.z_threshold")) * self.sensitivity
+        r_thr = max(1.2, float(d("detection.ratio_threshold")) * self.sensitivity)
         hype_thr = float(d("detection.hype_share_threshold"))
         # 1) clear chat explosion vs. the streamer's normal activity
         if w.z >= z_thr and w.ratio >= r_thr:
@@ -239,8 +278,10 @@ class StreamDetector:
         reactive = w.hype_share >= hype_thr or w.repetition >= 0.25
         if reactive and w.z >= z_thr * 0.66 and w.ratio >= max(1.5, r_thr * 0.7):
             return True
-        # 3) audio supports a near-threshold chat spike (audio never triggers alone)
-        if w.audio_spike_db >= float(d("detection.audio_boost_db")) and w.z >= z_thr * 0.8 \
+        # 3) audio or a visible reaction (face/body) supports a near-threshold chat spike
+        #    (audio never triggers alone)
+        visible = w.expr_spike >= float(d("detection.expr_boost")) or w.body_spike >= float(d("detection.body_boost"))
+        if (w.audio_spike_db >= float(d("detection.audio_boost_db")) or visible) and w.z >= z_thr * 0.8 \
                 and w.ratio >= r_thr * 0.8:
             return True
         return False

@@ -70,7 +70,12 @@ def plan_cut(duration: float, ev0: float, ev1: float, peak_hint: float,
              words: list[Word], segments: list[tuple[float, float, str]],
              min_sec: float, max_sec: float, remove_silence: bool = True,
              min_silence: float = 1.2, keep_silence: float = 0.3,
-             scene_cuts: list[float] | None = None) -> CutPlan:
+             scene_cuts: list[float] | None = None, ideal: tuple[float, float] = (20, 40),
+             preferred_max: float = 45, hard_max: float = 60) -> CutPlan:
+    """min_sec: shortest clip we will make at all; ideal: target range (we only extend toward
+    ideal[0] with real context - an earlier sentence - never with filler); preferred_max: trim
+    toward this; hard_max: never exceeded."""
+    max_sec = min(max_sec, hard_max)
     interest, speech, an = interest_curve(duration, chat, audio, motion, words)
     n = len(interest)
     t = np.arange(n) * STEP
@@ -94,12 +99,16 @@ def plan_cut(duration: float, ev0: float, ev1: float, peak_hint: float,
     else:
         end = duration
     end = max(end, ev1)
-    for w in words:  # never stop mid-word / mid-sentence (allow up to 4 s extra)
-        if w.start < end < w.end + 0.6:
-            end = w.end + 0.4
+    # never stop mid-word; finish the sentence only if it ends within 4 s (no chaining through
+    # continuous speech - that used to drag the ending far past the moment)
+    for w in words:
+        if w.start < end < w.end:
+            end = w.end + 0.15
+            break
     for s0, s1, _ in segments:
         if s0 < end < s1 and s1 - end <= 4:
             end = s1 + 0.3
+            break
     end = min(end, duration)
 
     # Opening: a sentence start/pause roughly 6-14 s before the peak, favouring a lively start.
@@ -120,35 +129,51 @@ def plan_cut(duration: float, ev0: float, ev1: float, peak_hint: float,
         if end - 1.0 <= c < end and c >= peak + 1.5:
             end = c - 0.04
 
-    # Length limits (quality first, but stay inside min/max).
-    if end - start < min_sec:
-        need = min_sec - (end - start)
-        extra_end = min(need / 2, duration - end)
-        end += extra_end
-        need -= extra_end
-        earlier = [c for c in boundary_candidates(words, segments) if c <= start - need]
-        start = max(0.0, earlier[-1] if earlier else start - need)
-        if end - start < min_sec:
-            end = min(duration, start + min_sec)
-    if end - start > max_sec:
-        later = [c for c in boundary_candidates(words, segments) if end - max_sec <= c <= peak - 1.5]
-        start = later[0] if later else end - max_sec
-        if end - start > max_sec:
-            end = start + max_sec
+    # Length rules: ideal 20-40 s, preferred max 45 s, absolute max 60 s. Short moments stay short
+    # unless an earlier sentence gives real context; never pad with irrelevant footage.
+    cands_all = boundary_candidates(words, segments)
+    if end - start < ideal[0]:
+        earlier = [c for c in cands_all if end - ideal[0] - 4 <= c < start and peak - c <= 20]
+        if earlier:                       # one more sentence of context, only if it exists
+            start = max(earlier[0], end - ideal[1])
+    if end - start < min_sec:             # extremely short: the minimum we accept
+        start = max(0.0, end - min_sec)
+    limit = preferred_max if end - start > preferred_max else max_sec
+    if end - start > limit:
+        later = [c for c in cands_all if end - limit <= c <= peak - 3]
+        if later:
+            start = later[0]
+        else:
+            # trimming the opening would lose the moment's context: shorten the ending instead
+            start = min(max(start, end - limit), max(0.0, peak - 3))
+        if end - start > limit:           # the reaction itself is long: end at a sentence end
+            ends = [s1 for _, s1, _ in segments if peak + 2 <= s1 <= start + limit]
+            end = (ends[-1] + 0.3) if ends else start + limit
+    if end - start > hard_max:
+        end = start + hard_max
     start, end = max(0.0, start), min(duration, end)
+    if start > peak - 1:                  # the moment itself must always be in the clip
+        start = max(0.0, peak - 3)
+        end = min(end, start + hard_max)
 
     keep = [(start, end)]
     if remove_silence:
-        trimmed = _remove_dead_air(start, end, t, speech, an, interest, min_silence, keep_silence, peak)
+        mn = _norm(np.asarray(motion, dtype=np.float32)[:n]) if len(motion) else np.zeros(n)
+        if len(mn) < n:
+            mn = np.pad(mn, (0, n - len(mn)))
+        trimmed = _remove_dead_air(start, end, t, speech, an, interest, min_silence, keep_silence, peak, mn)
         # removing dead air must not push the clip under the minimum length
         if sum(b - a for a, b in trimmed) >= min(min_sec, end - start):
             keep = trimmed
     return CutPlan(start, end, peak, keep, interest)
 
 
-def _remove_dead_air(start, end, t, speech, audio_n, interest, min_silence, keep_silence, peak):
-    """Cut stretches with no speech, low audio and low chat/visual interest."""
+def _remove_dead_air(start, end, t, speech, audio_n, interest, min_silence, keep_silence, peak, motion_n=None):
+    """Cut dead stretches: silence (no speech, quiet, nothing happening) and waiting/loading
+    screens (no speech, a static picture, no chat reaction - even if music is playing)."""
     dead = (speech < 0.5) & (audio_n < 0.15) & (interest < 0.2)
+    if motion_n is not None and len(motion_n) == len(speech):
+        dead |= (speech < 0.5) & (motion_n < 0.03) & (interest < 0.25)
     keep: list[tuple[float, float]] = []
     cur = start
     i0 = int(start / STEP)

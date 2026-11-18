@@ -26,7 +26,8 @@ security = HTTPBasic()
 
 # settings the dashboard may change (everything else stays file-only)
 EDITABLE = {"live_check_interval_sec", "recording", "chat", "detection", "clip", "scoring", "whisper",
-            "render", "subtitles", "metadata", "publishing", "styles", "notifications", "analytics", "storage"}
+            "render", "subtitles", "metadata", "publishing", "styles", "notifications", "analytics", "storage",
+            "gta6", "resources", "watchlist"}
 
 
 class StreamerIn(BaseModel):
@@ -179,6 +180,11 @@ def create_app(data_dir: str) -> FastAPI:
             r["jobs"] = [x for x in jobs if x["clip_id"] == r["id"]]
             if isinstance(r.get("scores"), dict):
                 r["scores"].pop("fingerprint", None)
+            if isinstance(r.get("labels"), str):
+                try:
+                    r["labels"] = __import__("json").loads(r["labels"])
+                except ValueError:
+                    r["labels"] = None
             r.pop("public_token", None)
         return rows
 
@@ -263,6 +269,50 @@ def create_app(data_dir: str) -> FastAPI:
         if not path or not os.path.exists(path):
             raise HTTPException(404)
         return FileResponse(path, media_type="video/mp4")
+
+    # ---- Kick chat webhooks (official Kick Public API events; signature-verified) ----
+    @app.post("/webhooks/kick")
+    async def kick_webhook(request: Request):
+        body = await request.body()
+        code, msg = await asyncio.to_thread(mgr(request).kick.handle_webhook, dict(request.headers), body)
+        return JSONResponse({"result": msg}, status_code=code)
+
+    # ---- watchlist / streamer stats ---------------------------------------------
+    @app.get("/api/streamer-stats", dependencies=A)
+    def streamer_stats():
+        day = time.time() - 86400
+        out = []
+        for r in db.query("SELECT login, name, rights_granted, enabled, weight, source FROM streamers ORDER BY login"):
+            q = lambda sql, *p: db.one(sql, p)["n"]  # noqa: E731
+            views = db.one("""SELECT SUM(v) n FROM (SELECT (SELECT views FROM metrics WHERE job_id=j.id ORDER BY fetched_at DESC LIMIT 1) v
+                              FROM publish_jobs j JOIN clips c ON c.id=j.clip_id WHERE c.streamer=? AND j.status='published')""",
+                           (r["login"],))["n"]
+            out.append({**r, "channels": db.channels(r["login"]),
+                        "moments_24h": q("SELECT COUNT(*) n FROM moments WHERE streamer=? AND created_at>?", r["login"], day),
+                        "clips_24h": q("SELECT COUNT(*) n FROM clips WHERE streamer=? AND created_at>?", r["login"], day),
+                        "clips_total": q("SELECT COUNT(*) n FROM clips WHERE streamer=?", r["login"]),
+                        "gta_clips": q("SELECT COUNT(*) n FROM clips WHERE streamer=? AND gta=1", r["login"]),
+                        "published": q("SELECT COUNT(*) n FROM publish_jobs j JOIN clips c ON c.id=j.clip_id WHERE c.streamer=? AND j.status='published'", r["login"]),
+                        "avg_score": db.one("SELECT AVG(score) n FROM clips WHERE streamer=?", (r["login"],))["n"],
+                        "avg_latency": db.one("SELECT AVG(latency) n FROM clips WHERE streamer=? AND latency IS NOT NULL", (r["login"],))["n"],
+                        "views": views})
+        return out
+
+    @app.get("/api/overview", dependencies=A)
+    def overview():
+        q = lambda sql, *p: db.one(sql, p)["n"]  # noqa: E731
+        views = db.one("""SELECT SUM(v) n FROM (SELECT (SELECT views FROM metrics WHERE job_id=j.id ORDER BY fetched_at DESC LIMIT 1) v
+                          FROM publish_jobs j WHERE j.status='published')""")["n"]
+        return {"published": q("SELECT COUNT(*) n FROM publish_jobs WHERE status='published'"),
+                "scheduled": q("SELECT COUNT(*) n FROM publish_jobs WHERE status IN ('scheduled','awaiting_approval')"),
+                "failed": q("SELECT COUNT(*) n FROM publish_jobs WHERE status='failed'"),
+                "clips_24h": q("SELECT COUNT(*) n FROM clips WHERE created_at>?", time.time() - 86400),
+                "gta_clips_24h": q("SELECT COUNT(*) n FROM clips WHERE gta=1 AND created_at>?", time.time() - 86400),
+                "avg_latency": db.one("SELECT AVG(latency) n FROM clips WHERE latency IS NOT NULL AND created_at>?",
+                                      (time.time() - 86400,))["n"],
+                "total_views": views, "gta6": cfg.get("gta6"),
+                "chat_sources": {"kick_configured": bool(getattr(app.state, "mgr", None) and app.state.mgr.kick.configured()),
+                                 "youtube_configured": bool(getattr(app.state, "mgr", None) and app.state.mgr.yt_chat.configured())}}
 
     # ---- social accounts -------------------------------------------------------
     def eng(request: Request):
@@ -465,6 +515,8 @@ def create_app(data_dir: str) -> FastAPI:
             "encryption": "env key" if os.environ.get("AUTOCLIPPER_SECRET_KEY") else "generated key file",
             "secrets": e.vault.status(),
             "redirect_uris": {p: f"{base}/oauth/{p}/callback" for p in ("youtube", "tiktok")},
+            "kick_webhook": f"{base}/webhooks/kick",
+            "kick_chat": mgr(request).kick.configured(), "youtube_chat": mgr(request).yt_chat.configured(),
             "providers": {k: {"configured": p.configured(), "hint": p.setup_hint(), "oauth": p.oauth,
                               "approval": p.requires_approval} for k, p in e.providers.items()},
             "accounts": accs,

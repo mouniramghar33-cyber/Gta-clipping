@@ -1,0 +1,68 @@
+# The exclusive watchlist (verified 2026-11-18). Only these streamers are monitored; the system
+# never adds streamers by itself. Channels are tried in order; the first live one is recorded,
+# so a multistream is recorded once and a platform switch is followed automatically.
+#
+# Verification: Twitch channel pages (og:title/description), Kick public channel API
+# (verified flag + followers), YouTube @handle canonical channel URL. Kick accounts with the
+# same name but no verification and a handful of followers (kaicenat, jynxzi, marlon, tota,
+# typicalgamer, ishowspeed, jasontheween) are name squatters and deliberately NOT listed.
+streamers:
+  - id: marlon
+    name: Marlon
+    aka: [marlon, mar3lg, marlon3lg]
+    channels:
+      - {platform: twitch, handle: marlon}
+  - id: lacy
+    name: Lacy
+    aka: [lacy]
+    channels:
+      - {platform: twitch, handle: lacy}
+      - {platform: kick, handle: lacy, note: "verified on Kick, 103k followers"}
+  - id: stableronaldo
+    name: Stable Ronaldo
+    aka: [stable ronaldo, stableronaldo]
+    channels:
+      - {platform: twitch, handle: stableronaldo}
+      - {platform: kick, handle: stableronaldo, note: "verified on Kick"}
+  - id: ishowspeed
+    name: IShowSpeed
+    aka: [ishowspeed, ishow speed]
+    channels:
+      - {platform: youtube, handle: UCWsDFcIhY2DBi3GB5uykGXA, note: "youtube.com/@IShowSpeed"}
+      - {platform: twitch, handle: ishowspeed}
+  - id: kaicenat
+    name: Kai Cenat
+    aka: [kai cenat, kaicenat]
+    channels:
+      - {platform: twitch, handle: kaicenat}
+  - id: jynxzi
+    name: Jynxzi
+    aka: [jynxzi]
+    channels:
+      - {platform: twitch, handle: jynxzi}
+  - id: jasontheween
+    name: JasonTheWeen
+    aka: [jasontheween, jason the ween]
+    channels:
+      - {platform: twitch, handle: jasontheween}
+  - id: adinross
+    name: Adin Ross
+    aka: [adin ross, adinross]
+    channels:
+      - {platform: kick, handle: adinross, note: "verified on Kick, 3.2M followers"}
+  - id: rakai
+    name: Rakai
+    aka: [rakai, 2xrakai]
+    channels:
+      - {platform: twitch, handle: 2xrakai, note: "twitch.tv/rakai is a different streamer"}
+  - id: tota
+    name: Tota
+    aka: [tota, totaamc]
+    channels:
+      - {platform: twitch, handle: totaamc}
+  - id: typicalgamer
+    name: Typical Gamer
+    aka: [typical gamer, typicalgamer]
+    channels:
+      - {platform: youtube, handle: UC2wKfjlioOCLP4xQMOWNcgg, note: "youtube.com/@TypicalGamer"}
+      - {platform: twitch, handle: typicalgamer}

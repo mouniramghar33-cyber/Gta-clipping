@@ -1,12 +1,13 @@
 """End-to-end test against a REAL live Twitch stream.
 
-    python tests/e2e_live.py <channel> [max_seconds] [--sensitive]
+    python tests/e2e_live.py <channel|watchlist> [max_seconds] [--sensitive]
 
 Runs the full system (live check, recording, chat, detection, Whisper, render, scoring)
 in a temporary data directory and prints the clips it produced. --sensitive lowers the
 detection thresholds so a short test run is likely to produce a clip.
 """
 import asyncio
+import os
 import json
 import logging
 import sys
@@ -22,7 +23,9 @@ from autoclipper.manager import Manager  # noqa: E402
 
 async def main(channel: str, secs: int, sensitive: bool, data: str) -> int:
     cfg = Config(data)
-    patch = {"streamers": [channel], "live_check_interval_sec": 30}
+    patch = {"live_check_interval_sec": 30}
+    if channel != "watchlist":       # "watchlist" = the verified 11-streamer watchlist only
+        patch["streamers"] = [channel]
     if sensitive:
         patch.update({"chat": {"min_baseline_windows": 6},
                       "detection": {"z_threshold": 1.6, "ratio_threshold": 1.4, "min_messages": 5}})
@@ -31,14 +34,16 @@ async def main(channel: str, secs: int, sensitive: bool, data: str) -> int:
     mgr = Manager(cfg, db)
     await mgr.start()
     t0 = time.time()
-    while time.time() - t0 < secs and db.one("SELECT COUNT(*) n FROM clips")["n"] < 2:
+    while time.time() - t0 < secs and db.one("SELECT COUNT(*) n FROM clips")["n"] < int(os.environ.get("E2E_CLIPS", 2)):
         await asyncio.sleep(15)
     while mgr.inflight:
         await asyncio.sleep(5)
     await mgr.stop()
-    clips = db.query("SELECT id, duration, score, scores, title, hook, layout, status, path FROM clips")
+    clips = db.query("SELECT id, streamer, platform, duration, score, tier, scores, title, hook, layout, status, gta, "
+                     "collab, labels, latency, path FROM clips")
     for c in clips:
         c["scores"].pop("fingerprint", None)
+        c["labels"] = {k: c["labels"].get(k) for k in ("primary", "labels", "gta_tags", "entertaining", "reason")} if c["labels"] else None
         print(json.dumps(c, ensure_ascii=False))
     for m in db.query("SELECT id, status, error, peak_ratio FROM moments"):
         print("moment", m)

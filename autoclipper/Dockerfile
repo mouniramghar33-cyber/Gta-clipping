@@ -10,10 +10,13 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
-# YuNet face detector (OpenCV Zoo, MIT licence), pinned by checksum
+# YuNet face detector + FER+ facial-expression model (OpenCV Zoo / ONNX Model Zoo, MIT), pinned by checksum
 RUN mkdir -p /opt/models && curl -fsSL -o /opt/models/face_detection_yunet_2023mar.onnx \
       https://huggingface.co/opencv/face_detection_yunet/resolve/main/face_detection_yunet_2023mar.onnx \
- && echo "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4  /opt/models/face_detection_yunet_2023mar.onnx" | sha256sum -c -
+ && echo "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4  /opt/models/face_detection_yunet_2023mar.onnx" | sha256sum -c - \
+ && curl -fsSL -o /opt/models/emotion-ferplus-8.onnx \
+      https://huggingface.co/onnxmodelzoo/emotion-ferplus-8/resolve/main/emotion-ferplus-8.onnx \
+ && echo "a2a2ba6a335a3b29c21acb6272f962bd3d47f84952aaffa03b60986e04efa61c  /opt/models/emotion-ferplus-8.onnx" | sha256sum -c -
 
 COPY autoclipper ./autoclipper
 

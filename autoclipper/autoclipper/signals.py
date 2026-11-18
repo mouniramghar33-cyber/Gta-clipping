@@ -66,8 +66,9 @@ AUDIO_HOP = 0.5   # seconds per loudness value
 VIDEO_FPS = 4     # motion samples per second
 
 
-def segment_features(path: str) -> tuple[np.ndarray, np.ndarray]:
-    """Return (loudness_db per 0.5 s, motion per 0.25 s) for a media file."""
+def segment_features(path: str, video: bool = True) -> tuple[np.ndarray, np.ndarray]:
+    """Return (loudness_db per 0.5 s, motion per 0.25 s) for a media file.
+    video=False skips the (expensive) full video decode and returns an empty motion array."""
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", path,
            "-map", "0:a:0?", "-ac", "1", "-ar", str(AUDIO_SR), "-f", "s16le", "pipe:1"]
     a = subprocess.run(cmd, capture_output=True, timeout=60).stdout
@@ -80,6 +81,8 @@ def segment_features(path: str) -> tuple[np.ndarray, np.ndarray]:
         loud = 20 * np.log10(rms + 1e-9)
     else:
         loud = np.zeros(0, dtype=np.float32)
+    if not video:
+        return loud.astype(np.float32), np.zeros(0, dtype=np.float32)
     w, h = 64, 36
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", path, "-map", "0:v:0",
            "-vf", f"fps={VIDEO_FPS},scale={w}:{h},format=gray", "-f", "rawvideo", "pipe:1"]

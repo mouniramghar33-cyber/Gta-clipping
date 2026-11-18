@@ -60,7 +60,7 @@ def _latest(db) -> list[dict]:
     """Latest metric snapshot per published job, joined with clip/account info."""
     return db.query("""
         SELECT j.id job_id, j.account_id, j.style, j.published_at, j.url, j.title,
-               c.streamer, c.top_cat, c.layout, c.score, c.duration,
+               c.streamer, c.top_cat, c.layout, c.score, c.duration, c.labels, c.gta, c.tier,
                a.provider, a.platform, a.display_name,
                m.views, m.likes, m.comments, m.shares, m.watch_time_min, m.avg_view_pct, m.subs_gained,
                m.age_hours, m.fetched_at
@@ -98,6 +98,11 @@ def insights(db, cfg) -> dict:
     tz = ZoneInfo(cfg.get("publishing.timezone"))
     hour = lambda r: datetime.fromtimestamp(r["published_at"], tz).hour  # noqa: E731
     totals = {"posts_with_metrics": len(rows), "comparable_posts": len(rel)}
+    eng = [((r["likes"] or 0) + (r["comments"] or 0) + (r["shares"] or 0)) / r["views"]
+           for r in rows if r["views"] and r["likes"] is not None]
+    totals["engagement_rate"] = round(statistics.mean(eng), 4) if eng else None
+    comp = [r["avg_view_pct"] for r in rows if r["avg_view_pct"] is not None]
+    totals["avg_viewed_pct"] = round(statistics.mean(comp), 1) if comp else None   # completion proxy
     for k in ("views", "likes", "comments", "shares", "watch_time_min", "subs_gained"):
         vals = [r[k] for r in rows if r[k] is not None]
         totals[k] = sum(vals) if vals else None   # None = no platform reported it
@@ -109,6 +114,10 @@ def insights(db, cfg) -> dict:
         "by_hour": _group(rel, hour, n),
         "by_layout": _group(rel, lambda r: r["layout"], n),
         "by_platform": _group(rel, lambda r: r["platform"], n),
+        "by_duration": _group(rel, lambda r: _bucket(r["duration"]), n),
+        "by_type": _group(rel, lambda r: (_labels(r).get("primary") or "unknown"), n),
+        "by_gta": _group(rel, lambda r: "GTA VI" if r["gta"] else "other", n),
+        "by_tier": _group(rel, lambda r: r["tier"] or "-", n),
         "posts": sorted(rows, key=lambda r: -(r["views"] or 0))[:100],
     }
 
@@ -143,3 +152,53 @@ def best_times(db, cfg, account: dict) -> list[str] | None:
         return None
     best = sorted(g, key=lambda h: -g[h]["rel"])[:4]
     return [f"{h:02d}:15" for h in sorted(best)]
+
+
+def category_performance(db, cfg, category: str) -> float | None:
+    """Mean relative views of your published clips from this stream category (None = no data)."""
+    rel = [r for r in relative(_latest_with_category(db)) if (r.get("category") or "").lower() == category.lower()]
+    if len(rel) < int(cfg.get("analytics.min_samples")):
+        return None
+    return statistics.mean(r["rel"] for r in rel)
+
+
+def _latest_with_category(db) -> list[dict]:
+    rows = _latest(db)
+    cats = {r["id"]: r["category"] for r in db.query("SELECT j.id, c.category FROM publish_jobs j JOIN clips c ON c.id=j.clip_id")}
+    for r in rows:
+        r["category"] = cats.get(r["job_id"])
+    return rows
+
+
+def _bucket(d) -> str:
+    if d is None:
+        return "?"
+    for lo, hi in ((0, 20), (20, 30), (30, 40), (40, 45), (45, 61)):
+        if lo <= d < hi:
+            return f"{lo}-{hi - 1 if hi == 61 else hi}s"
+    return "60s+"
+
+
+def _labels(r) -> dict:
+    import json
+    v = r.get("labels")
+    if isinstance(v, str):
+        try:
+            return json.loads(v)
+        except ValueError:
+            return {}
+    return v or {}
+
+
+def update_streamer_weights(db, cfg) -> dict:
+    """Resource allocation input: relative performance per streamer (1.0 = average, no data = 1.0).
+    Higher weights get their moments processed first and keep full recording quality when busy."""
+    rel = relative(_latest(db))
+    g = _group(rel, lambda r: r["streamer"], int(cfg.get("analytics.min_samples")))
+    weights = {}
+    for row in db.query("SELECT login FROM streamers"):
+        w = g.get(row["login"], {}).get("rel", 1.0)
+        w = round(max(0.3, min(3.0, w)), 3)
+        db.execute("UPDATE streamers SET weight=? WHERE login=?", (w, row["login"]))
+        weights[row["login"]] = w
+    return weights

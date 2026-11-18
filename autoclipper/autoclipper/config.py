@@ -33,6 +33,22 @@ DEFAULTS: dict[str, Any] = {
         "min_baseline_windows": 18,  # need ~3 min of history before detecting
         # Chat reacts after the event; shift chat timestamps back by this much.
         "reaction_delay_sec": 5,
+        "youtube_daily_units": 8000,   # YouTube Data API quota budget for live chat (10,000/day default)
+        "youtube_min_poll_sec": 8,
+    },
+    "watchlist": {"exclusive": True},   # only the verified watchlist + streamers you add yourself
+    "gta6": {
+        "enabled": True,
+        "release_date": "2026-11-19",
+        "priority_days": 45,           # "release period" during which GTA VI is prioritised
+        "sensitivity": 0.85,           # detection thresholds x this while a streamer plays GTA VI
+        "trend_score": 90,             # trend relevance of GTA VI clips during the release period
+    },
+    "resources": {
+        "vision": True,                # face/expression/body signals in real time
+        "vision_every_n_segments": 1,
+        "low_tier_quality": "720p60,720p,best",  # recording quality for the weakest performers when busy
+        "busy_cpu_percent": 85,
     },
     "detection": {
         "min_messages": 8,          # ignore windows with fewer messages
@@ -44,34 +60,50 @@ DEFAULTS: dict[str, Any] = {
         "max_moment_sec": 90,       # cap on one merged moment
         # Audio may raise a score but never triggers a clip on its own.
         "audio_boost_db": 8.0,
+        "expr_boost": 0.25,         # facial expression jump that supports a near-threshold chat spike
+        "body_boost": 2.0,          # body movement x normal that supports a near-threshold chat spike
+        # Without chat (YouTube without API key, Kick without app): 2 of 3 strong signals needed
+        "nochat_audio_db": 10.0,
+        "nochat_expr": 0.35,
+        "nochat_body_ratio": 2.5,
     },
     "clip": {
-        "pre_sec": 30,
-        "post_sec": 30,
-        "min_sec": 15,
-        "max_sec": 60,
+        "pre_sec": 30,              # rolling buffer analysed before the moment
+        "post_sec": 15,             # waited for after the moment (enough for the reaction tail)
+        "min_sec": 8,               # absolute minimum
+        "ideal_min_sec": 20,
+        "ideal_max_sec": 40,
+        "preferred_max_sec": 45,
+        "max_sec": 60,              # absolute maximum, never exceeded
         "remove_silence": True,
-        "min_silence_sec": 1.2,     # remove dead air longer than this
-        "keep_silence_sec": 0.3,    # keep this much of a removed gap
+        "min_silence_sec": 1.2,
+        "keep_silence_sec": 0.3,
+        "loop_ending": True,        # end on a frame that matches the opening when it fits
     },
     "scoring": {
         "weights": {
-            "chat_engagement": 25,
-            "emotional_intensity": 15,
+            "opening_hook": 20,
             "entertainment_value": 20,
-            "opening_hook": 15,
-            "retention_potential": 15,
-            "uniqueness": 10,
+            "retention_potential": 20,
+            "emotional_intensity": 10,
+            "chat_engagement": 10,
+            "trend_relevance": 10,
+            "originality": 5,
+            "streamer_popularity": 5,
         },
         "priority_threshold": 80,
-        "min_score_to_keep": 35,    # clips below this are rendered but auto-rejected
+        # Publishing tiers (scores are predictions, not guaranteed views)
+        "tiers": {"immediate": 95, "very_high": 90, "high": 85, "normal": 80, "review": 70},
+        "min_score_to_keep": 70,    # below: automatically rejected (70-79 = saved for review)
+        "short_clip_min_score": 85, # clips under 20 s are only kept when this good
     },
     "whisper": {
         "model": "small",           # tiny/base/small/medium/large-v3 (CPU: small is a good balance)
         "compute_type": "int8",
         "device": "cpu",
         "language": None,           # None = automatic language detection
-        "beam_size": 5,
+        "beam_size": 1,             # greedy decoding: ~2x faster, keeps clips within 60-180 s
+        "initial_prompt": "Twitch stream. Kai Cenat, IShowSpeed, Adin Ross, Jynxzi, Lacy, Marlon, Stable Ronaldo, JasonTheWeen, Rakai, Tota, Typical Gamer. GTA 6, Vice City, Leonida, Jason, Lucia, NPC, chat.",
     },
     "render": {
         "width": 1080,
@@ -81,7 +113,7 @@ DEFAULTS: dict[str, Any] = {
         "preset": "veryfast",
         "audio_bitrate": "192k",
         "loudness_lufs": -14,
-        "workers": 1,               # parallel clip renders (CPU heavy)
+        "workers": 2,               # parallel clip jobs (Whisper runs one at a time, FFmpeg in parallel)
         "burn_hook": True,          # show the hook text for the first seconds
         "default_style": "clean",   # style of the preview render (accounts can use others)
         "hook_sec": 2.5,
@@ -253,6 +285,12 @@ class Config:
 
 def validate(c: dict) -> None:
     w = c["scoring"]["weights"]
+    t = c["scoring"].get("tiers", {})
+    if t and not (t["immediate"] >= t["very_high"] >= t["high"] >= t["normal"] >= t["review"]):
+        raise ValueError("scoring.tiers must be descending: immediate >= very_high >= high >= normal >= review")
+    cl = c["clip"]
+    if not (cl["min_sec"] <= cl["ideal_min_sec"] <= cl["ideal_max_sec"] <= cl["preferred_max_sec"] <= cl["max_sec"] <= 60):
+        raise ValueError("clip durations must satisfy min <= ideal_min <= ideal_max <= preferred_max <= max <= 60")
     if any((not isinstance(v, (int, float))) or v < 0 for v in w.values()) or sum(w.values()) <= 0:
         raise ValueError("scoring weights must be non-negative numbers with a positive sum")
     p = c["publishing"]
@@ -272,8 +310,8 @@ def validate(c: dict) -> None:
     if not c["styles"]:
         raise ValueError("at least one style is required")
     cl = c["clip"]
-    if not (5 <= cl["min_sec"] < cl["max_sec"] <= 180):
-        raise ValueError("clip.min_sec/max_sec out of range")
+    if not (3 <= cl["min_sec"] < cl["max_sec"] <= 60):
+        raise ValueError("clip.min_sec/max_sec out of range (absolute maximum is 60 s)")
     if c["chat"]["window_sec"] < 2 or c["chat"]["step_sec"] < 1:
         raise ValueError("chat window/step too small")
     for k in ("priority_threshold", "min_score_to_keep"):

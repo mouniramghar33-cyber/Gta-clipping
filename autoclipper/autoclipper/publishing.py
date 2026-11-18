@@ -39,7 +39,7 @@ log = logging.getLogger(__name__)
 
 ACTIVE = ("awaiting_approval", "scheduled", "uploading", "processing")
 COUNTED = ("scheduled", "uploading", "processing", "published", "awaiting_approval")
-MAX_LEN = {"youtube": 180, "tiktok": 600, "instagram": 90}
+MAX_LEN = {"youtube": 60, "tiktok": 60, "instagram": 60}   # your rule: never publish anything over 60 s
 
 
 def providers(ctx: Context) -> dict:
@@ -197,11 +197,13 @@ class Engine:
                 return f"near-duplicate content of job {r['id']}"
         return None
 
-    def next_slot(self, acc: dict, now: float | None = None) -> float:
+    def next_slot(self, acc: dict, now: float | None = None, urgent: bool = False) -> float:
         now = now or time.time()
         p = self.cfg["publishing"]
         tz = ZoneInfo(p["timezone"])
         times = acc.get("posting_times") or p["posting_times"]
+        if urgent:   # immediate / very high priority: first moment the limits allow
+            times = "immediate"
         if times == "auto":
             times = analytics.best_times(self.db, self.cfg, acc) or p["posting_times"]
         limit = int(acc["daily_limit"] if acc.get("daily_limit") is not None else p["daily_limit"])
@@ -252,8 +254,9 @@ class Engine:
             style = analytics.pick_style(self.db, self.cfg, acc, clip_id) if acc.get("style") == "auto" else acc.get("style")
             md = platform_metadata(clip, acc["platform"], self.cfg)
             needs_approval = self.providers[acc["provider"]].requires_approval
+            urgent = clip.get("tier") in ("immediate", "very_high")
             try:
-                slot = self.next_slot(acc)
+                slot = self.next_slot(acc, urgent=urgent)
             except ValueError as e:
                 out.append({"account_id": acc["id"], "skipped": str(e)})
                 continue
@@ -329,6 +332,7 @@ class Engine:
         due = self.db.query("SELECT * FROM publish_jobs WHERE status='scheduled' AND scheduled_at<=? AND "
                             "(next_attempt_at IS NULL OR next_attempt_at<=?) AND (lease_until IS NULL OR lease_until<?) "
                             "ORDER BY adjusted_score DESC, scheduled_at LIMIT 3", (now, now, now))
+        # never let a slow upload delay an immediate-priority clip: highest score first
         for job in due:
             if self.cfg.get("publishing.emergency_stop"):
                 break

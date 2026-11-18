@@ -48,7 +48,8 @@ class Transcriber:
                                        download_root=self.download_root)
         return self._model
 
-    def transcribe(self, audio_path: str, language: str | None = None, beam_size: int = 5) -> Transcript:
+    def transcribe(self, audio_path: str, language: str | None = None, beam_size: int = 5,
+                   initial_prompt: str | None = None) -> Transcript:
         with self._lock:  # one inference at a time; the model already uses all cores
             model = self._load()
             # Decode with FFmpeg ourselves (16 kHz mono float32) instead of relying on PyAV.
@@ -60,6 +61,7 @@ class Transcriber:
                 audio, language=language, beam_size=beam_size, word_timestamps=True,
                 vad_filter=True, vad_parameters={"min_silence_duration_ms": 400},
                 condition_on_previous_text=False,
+                initial_prompt=initial_prompt or None,  # names/terms -> correct spelling of streamers & GTA words
             )
             words: list[Word] = []
             segments: list[tuple[float, float, str]] = []

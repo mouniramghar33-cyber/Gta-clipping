@@ -19,6 +19,15 @@ CREATE TABLE IF NOT EXISTS streamers (
     notes TEXT DEFAULT '',
     added_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS streamer_channels (
+    streamer TEXT NOT NULL,          -- streamers.login (watchlist id)
+    platform TEXT NOT NULL,          -- twitch | kick | youtube
+    handle TEXT NOT NULL,            -- twitch login, kick slug, youtube channel id
+    priority INTEGER NOT NULL DEFAULT 0,
+    note TEXT,
+    platform_user_id TEXT,           -- e.g. Kick broadcaster_user_id (resolved at runtime)
+    PRIMARY KEY (streamer, platform, handle)
+);
 CREATE TABLE IF NOT EXISTS sessions (
     id INTEGER PRIMARY KEY,
     streamer TEXT NOT NULL,
@@ -165,11 +174,17 @@ CREATE TABLE IF NOT EXISTS publications (
 """
 
 JSON_FIELDS = {"signals", "scores", "hashtags", "options", "upload_state", "streamers", "settings",
-               "posting_times", "raw", "spec"}
+               "posting_times", "raw", "spec", "labels", "aka"}
 
 # Columns added after the first release (applied to existing databases on start).
 MIGRATIONS = {
-    "clips": {"master_dir": "TEXT", "top_cat": "TEXT", "category": "TEXT", "quote": "TEXT"},
+    "clips": {"master_dir": "TEXT", "top_cat": "TEXT", "category": "TEXT", "quote": "TEXT",
+              "labels": "TEXT", "gta": "INTEGER DEFAULT 0", "collab": "TEXT", "latency": "REAL",
+              "tier": "TEXT", "platform": "TEXT"},
+    "streamers": {"name": "TEXT", "aka": "TEXT", "source": "TEXT DEFAULT 'manual'", "followers": "INTEGER",
+                  "weight": "REAL DEFAULT 1.0"},
+    "moments": {"collab": "TEXT", "gta": "INTEGER DEFAULT 0", "platform": "TEXT", "category": "TEXT"},
+    "sessions": {"platform": "TEXT", "handle": "TEXT"},
 }
 
 
@@ -243,6 +258,9 @@ class DB:
             "INSERT OR IGNORE INTO streamers (login, platform, rights_granted, added_at) VALUES (?,?,?,?)",
             (login.lower().strip(), platform, int(rights_granted), time.time()),
         )
+
+    def channels(self, streamer: str) -> list[dict]:
+        return self.query("SELECT * FROM streamer_channels WHERE streamer=? ORDER BY priority", (streamer,))
 
     def streamers(self, enabled_only: bool = False) -> list[dict]:
         q = "SELECT * FROM streamers" + (" WHERE enabled=1" if enabled_only else "") + " ORDER BY login"

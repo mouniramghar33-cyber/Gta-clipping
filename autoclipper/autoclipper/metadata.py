@@ -24,6 +24,31 @@ PHRASES = {
     "clip": ("had chat yelling CLIP IT", "CHAT YELLED CLIP IT", "🎬"),
 }
 
+LABEL_PHRASES = {
+    "funny": ("had everyone dying", "THIS IS TOO FUNNY", "😭"),
+    "rage": ("completely lost it", "THE RAGE IS REAL", "😡"),
+    "argument": ("got into it", "THIS GOT HEATED", "😬"),
+    "reaction": ("couldn't believe it", "THIS REACTION", "😳"),
+    "collab": ("together is pure chaos", "THESE TWO TOGETHER", "💀"),
+    "emotional": ("got emotional", "THIS WAS EMOTIONAL", "🥹"),
+    "donation": ("reacted to this donation", "THIS DONATION", "💸"),
+    "embarrassing": ("wants this clip deleted", "DELETE THIS CLIP", "💀"),
+    "fail": ("fumbled it", "HOW DID THIS HAPPEN", "💀"),
+    "impressive": ("went crazy", "THIS IS INSANE", "🔥"),
+    "discovery": ("found something wild", "WAIT FOR IT", "👀"),
+    "meme": ("made chat spam this", "CHAT WON'T STOP", "💀"),
+}
+GTA_PHRASES = {
+    "first_reaction": ("playing GTA 6 for the first time", "FIRST TIME IN GTA 6", "🌴"),
+    "npc": ("vs a GTA 6 NPC", "GTA 6 NPCS ARE DIFFERENT", "💀"),
+    "police_chase": ("in a GTA 6 police chase", "GTA 6 COPS DON'T PLAY", "🚔"),
+    "glitch": ("found a GTA 6 glitch", "GTA 6 GLITCH", "💀"),
+    "easter_egg": ("found a GTA 6 easter egg", "GTA 6 EASTER EGG", "👀"),
+    "realistic": ("can't believe how real GTA 6 is", "GTA 6 IS TOO REAL", "🤯"),
+    "graphics": ("can't believe how real GTA 6 is", "GTA 6 IS TOO REAL", "🤯"),
+    "death": ("got wasted in GTA 6", "GTA 6 IS RUTHLESS", "💀"),
+}
+
 _emoji = re.compile("[\U0001F000-\U0001FAFF☀-➿️]")
 
 
@@ -71,9 +96,16 @@ def build_metadata(*, streamer: str, display: str | None, category: str | None, 
                    words, peak_out: float, score: float, explanation: list[str], src_start: float,
                    src_end: float, peak_wall: float, stream_offset: float | None,
                    default_tags: list[str], credit_template: str, layout_kind: str,
-                   llm_base_url: str = "", llm_model: str = "") -> dict:
+                   llm_base_url: str = "", llm_model: str = "", collab: list | None = None,
+                   gta: bool = False, labels: dict | None = None) -> dict:
     name = display or streamer
-    phrase, hook_cat, emo = PHRASES.get(top_cat or "", ("had chat going crazy", "CHAT WENT CRAZY", "💀"))
+    if collab:
+        name = " x ".join([name, *collab[:2]])
+    primary = (labels or {}).get("primary")
+    phrase, hook_cat, emo = LABEL_PHRASES.get(primary) or PHRASES.get(top_cat or "", ("had chat going crazy", "CHAT WENT CRAZY", "💀"))
+    if gta and primary in (None, "reaction") and (labels or {}).get("gta_tags"):
+        tag = labels["gta_tags"][0]
+        phrase, hook_cat, emo = GTA_PHRASES.get(tag, (phrase, hook_cat, emo))
     quote = best_quote(words, peak_out)
     if quote:
         title = f'{name}: "{quote}" {emo}'
@@ -88,7 +120,9 @@ def build_metadata(*, streamer: str, display: str | None, category: str | None, 
     desc_lines = [f"{name} live on Twitch" + (f" ({category})" if category else "") + f", {when}.",
                   credit]
     tags = []
-    for t in [hashtagify(streamer), hashtagify(category), *default_tags,
+    gta_tags = ["gta6", "gtavi", "gta"] if gta else []
+    for t in [*gta_tags, hashtagify(streamer), *(hashtagify(c) for c in (collab or [])),
+              hashtagify(category) if not gta else None, *default_tags,
               {"laugh": "funny", "shock": "wtf", "hype": "hype", "fail": "fail"}.get(top_cat or "")]:
         if t and t not in tags:
             tags.append(t)
@@ -99,7 +133,7 @@ def build_metadata(*, streamer: str, display: str | None, category: str | None, 
         "title": title[:100],
         "hook": strip_emoji(hook),
         "description": "\n".join(desc_lines),
-        "hashtags": tags[:6],
+        "hashtags": tags[:8],
         "thumbnail_suggestion": thumb,
         "explanation": f"Score {score:.0f}/100. " + "; ".join(explanation),
         "timestamps": {

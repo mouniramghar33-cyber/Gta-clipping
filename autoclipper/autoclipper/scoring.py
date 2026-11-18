@@ -32,7 +32,11 @@ def score_clip(*, sig: dict, words, out_duration: float, interest_out: np.ndarra
                speech_out: np.ndarray, audio_out_db: np.ndarray, peak_out: float,
                chat_cats: dict, chat_msgs: int, transcript_text: str, chat_top: list[str],
                history_fps: list[list[str]], history_ratios: list[float], weights: dict,
-               step: float = 0.5) -> tuple[float, dict, list[str], list[str]]:
+               step: float = 0.5, context: dict | None = None, trend: tuple[float, str] | None = None,
+               popularity: tuple[float, str] | None = None) -> tuple[float, dict, list[str], list[str]]:
+    """context: ContextResult.as_dict(); trend/popularity: (score 0-100, explanation) computed by the
+    caller from measured data (GTA VI mode, category performance, viewer/follower counts)."""
+    context = context or {}
     expl: list[str] = []
 
     # 1. Chat engagement: how far above the streamer's normal chat this went
@@ -47,8 +51,11 @@ def score_clip(*, sig: dict, words, out_duration: float, interest_out: np.ndarra
     n_words = max(len(words), 1)
     emph = sum(1 for w in words if w.text.endswith("!") or (w.text.isupper() and len(w.text) > 1))
     shock_laugh = (chat_cats.get("shock", 0) + chat_cats.get("laugh", 0)) / max(chat_msgs, 1)
-    emo = 100 * (0.45 * clamp01(spike / 15) + 0.25 * clamp01(emph / (n_words * 0.12 + 1))
-                 + 0.30 * clamp01(shock_laugh * 1.6))
+    face = float(sig.get("max_expr_spike", 0) or 0)
+    emo = 100 * (0.35 * clamp01(spike / 15) + 0.2 * clamp01(emph / (n_words * 0.12 + 1))
+                 + 0.25 * clamp01(shock_laugh * 1.6) + 0.2 * clamp01(face / 0.5))
+    if face >= 0.25:
+        expl.append(f"visible facial reaction (+{face:.0%} expression vs normal)")
     if spike >= 6:
         expl.append(f"audio jumped {spike:.0f} dB above the stream's normal level")
 
@@ -61,6 +68,16 @@ def score_clip(*, sig: dict, words, out_duration: float, interest_out: np.ndarra
     laugh_speech = bool(re.search(r"\b(ha(ha)+|lmao|lol)\b", transcript_text.lower()))
     ent = 100 * clamp01(1.1 * max(shares.values() or [0]) + 0.5 * rep + 0.15 * min(clip_req, 3)
                         + (0.1 if laugh_speech else 0))
+    labels = context.get("labels") or {}
+    if labels:  # context understanding: what kind of moment it is, from speech/chat/face evidence
+        ent = max(ent, 100 * clamp01(0.55 * max(labels.values()) + 0.12 * (len(labels) - 1)))
+        expl.append(f"moment type: {context.get('primary')} ({context.get('reason')})")
+    if context.get("collab"):
+        ent = min(100, ent + 8)
+        expl.append("collaboration with " + ", ".join(context["collab"]))
+    if context.get("entertaining") is False:
+        ent *= 0.5
+        expl.append("context check: " + (context.get("reason") or "looks like ordinary conversation"))
     if top_cat and shares[top_cat] > 0.08:
         expl.append(f"{shares[top_cat]:.0%} of chat messages were {top_cat} reactions")
     if rep >= 0.2:
@@ -83,7 +100,7 @@ def score_clip(*, sig: dict, words, out_duration: float, interest_out: np.ndarra
     # 5. Retention potential: little dead air, sensible length, payoff not at the very start
     active = float(np.mean((speech_out > 0.5) | (interest_out > 0.3))) if len(interest_out) else 0.0
     d = out_duration
-    length_f = 1.0 if 15 <= d <= 40 else (max(0.6, 1 - (d - 40) / 60) if d > 40 else max(0.5, d / 15))
+    length_f = 1.0 if 20 <= d <= 40 else (max(0.55, 1 - (d - 40) / 40) if d > 40 else max(0.6, d / 20))
     pos = peak_out / max(d, 1e-6)
     pos_f = 1.0 if 0.2 <= pos <= 0.85 else 0.8
     ret = 100 * clamp01(math.sqrt(active) * length_f * pos_f)
@@ -98,10 +115,21 @@ def score_clip(*, sig: dict, words, out_duration: float, interest_out: np.ndarra
     if history_ratios and rarity >= 0.9:
         expl.append("one of the biggest chat reactions recorded for this streamer")
 
+    # Trend relevance and streamer popularity come from measured data supplied by the caller.
+    trend_s, trend_why = trend if trend else (50.0, "")
+    pop_s, pop_why = popularity if popularity else (50.0, "")
+    if trend_why:
+        expl.append(trend_why)
+    if pop_why:
+        expl.append(pop_why)
     comps = {
-        "chat_engagement": chat, "emotional_intensity": emo, "entertainment_value": ent,
-        "opening_hook": hook, "retention_potential": ret, "uniqueness": uniq,
+        "opening_hook": hook, "entertainment_value": ent, "retention_potential": ret,
+        "emotional_intensity": emo, "chat_engagement": chat, "trend_relevance": trend_s,
+        "originality": uniq, "streamer_popularity": pop_s,
     }
+    weights = dict(weights)
+    if "uniqueness" in weights and "originality" not in weights:  # older config name
+        weights["originality"] = weights.pop("uniqueness")
     wsum = sum(weights.get(k, 0) for k in comps) or 1
     total = sum(comps[k] * weights.get(k, 0) for k in comps) / wsum
     comps = {k: round(float(v), 1) for k, v in comps.items()}
