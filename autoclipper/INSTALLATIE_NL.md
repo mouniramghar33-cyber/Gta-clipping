@@ -22,9 +22,12 @@ beperkt aantal streams tegelijk (zie stap 3).
 # Docker installeren (Ubuntu/Debian)
 curl -fsSL https://get.docker.com | sh
 
-# Code ophalen
-git clone https://github.com/mouniramghar33-cyber/Gta-clipping.git
+# Code ophalen (branch met AutoClipper)
+git clone -b claude/new-session-dloc7v https://github.com/mouniramghar33-cyber/Gta-clipping.git
 cd Gta-clipping/autoclipper
+# Is je repository privé? Dan vraagt git om inloggen: gebruik je GitHub-gebruikersnaam en
+# als wachtwoord een "personal access token" (GitHub → Settings → Developer settings →
+# Fine-grained tokens, alleen leesrechten op deze repository).
 
 # Instellingen
 cp .env.example .env
