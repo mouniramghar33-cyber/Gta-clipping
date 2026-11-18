@@ -2,7 +2,7 @@ streamlink==8.6.3
 faster-whisper==1.2.1
 ctranslate2==4.9.0
 opencv-python-headless==4.12.0.88
-numpy==2.5.3
+numpy==2.2.6
 fastapi==0.163.2
 uvicorn[standard]==0.54.0
 websockets==17.4
